@@ -1,0 +1,40 @@
+{
+  "name": "clinica-dental-bot",
+  "version": "0.1.0",
+  "description": "Chatbot de WhatsApp (YCloud + Claude) para agenda de clínica dental, con Directus como backend de datos",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "provision": "tsx scripts/provision-directus.ts",
+    "provision:passwords": "tsx scripts/provision-password-management.ts",
+    "provision:patients": "tsx scripts/provision-patient-fields.ts",
+    "provision:doctor-clinics": "tsx scripts/provision-doctor-clinics.ts",
+    "seed": "tsx scripts/seed-directus.ts",
+    "create-templates": "tsx scripts/create-whatsapp-templates.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "@directus/sdk": "^20.1.0",
+    "dotenv": "^17.0.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.5.2",
+    "luxon": "^3.7.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/luxon": "^3.7.0",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

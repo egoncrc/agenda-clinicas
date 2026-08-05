@@ -1,0 +1,36 @@
+# ---- Directus (backend de datos) ----
+DIRECTUS_URL=https://directus.tu-dominio.com
+# Token estático de un rol de servicio con permisos acotados (NO el admin en producción)
+DIRECTUS_TOKEN=
+
+# ---- YCloud (WhatsApp BSP oficial) ----
+YCLOUD_API_KEY=
+# Secreto para validar la firma del webhook entrante de YCloud
+YCLOUD_WEBHOOK_SECRET=
+# Número de WhatsApp de la clínica (formato E.164, ej. +593999999999)
+WHATSAPP_FROM=
+# WABA (WhatsApp Business Account) id, para crear/enviar plantillas
+YCLOUD_WABA_ID=
+
+# ---- Anthropic (Claude) ----
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-5
+
+# ---- Aplicación ----
+PORT=3000
+# Zona horaria de la clínica (IANA), ej. America/Costa_Rica
+CLINIC_TIMEZONE=America/Costa_Rica
+# Paso de generación de huecos, en minutos
+SLOT_STEP_MINUTES=15
+
+# ---- Recordatorios de citas (Fase 8) ----
+# Envío real de recordatorios por WhatsApp (plantillas aprobadas). Apagado por defecto.
+REMINDERS_ENABLED=false
+# Cada cuántos minutos se revisan las citas pendientes de recordatorio
+REMINDER_CHECK_INTERVAL_MINUTES=15
+
+# ---- Agendamiento público sin login (link único, envío manual mientras no hay bot activo) ----
+# Token estático compartido: el link es "<URL de /agendar>?token=<este valor>". No vence ni está atado a un teléfono.
+BOOKING_PUBLIC_LINK_TOKEN=
+# Orígenes permitidos (CORS) para la API pública de agendamiento, separados por coma
+PUBLIC_BOOKING_CORS_ORIGINS=https://panel.egonia.site,http://localhost:5173

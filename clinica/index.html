@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <title>Panel Clínica</title>
+    <style>
+      /*
+        Splash estático, sin depender de Vue/Tailwind: se pinta en el primer
+        frame (evita el flash de pantalla en blanco mientras main.ts resuelve
+        la sesión antes de montar) y desaparece solo al ser reemplazado por
+        el contenido real cuando Vue hace app.mount("#app").
+      */
+      html,
+      body {
+        background: #f8fafc;
+      }
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #app-splash::after {
+        content: "";
+        width: 2.25rem;
+        height: 2.25rem;
+        border-radius: 9999px;
+        border: 3px solid #dce4f1;
+        border-top-color: #2c4872;
+        animation: app-splash-spin 0.7s linear infinite;
+      }
+      @keyframes app-splash-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"><div id="app-splash"></div></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

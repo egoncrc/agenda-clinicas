@@ -1,0 +1,29 @@
+{
+  "name": "directus-extension-auth-login-status-hook",
+  "description": "Devuelve USER_SUSPENDED (en vez del genérico INVALID_CREDENTIALS) al intentar loguear con una cuenta Doctor/Receptionist cuya directus_users.status no sea 'active'",
+  "icon": "person_off",
+  "version": "1.0.0",
+  "keywords": [
+    "directus",
+    "directus-extension",
+    "directus-custom-hook"
+  ],
+  "type": "module",
+  "directus:extension": {
+    "type": "hook",
+    "path": "dist/index.js",
+    "source": "src/index.ts",
+    "host": "^10.10.0 || ^11.0.0"
+  },
+  "scripts": {
+    "build": "directus-extension build",
+    "dev": "directus-extension build -w"
+  },
+  "devDependencies": {
+    "@directus/extensions-sdk": "^13.1.1",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "@directus/errors": "^2.4.0"
+  }
+}
