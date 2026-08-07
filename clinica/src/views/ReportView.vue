@@ -17,6 +17,7 @@ import BarChart from "@/components/ui/BarChart.vue";
 import LineChart from "@/components/ui/LineChart.vue";
 import DonutChart from "@/components/ui/DonutChart.vue";
 import ReportFilterBar from "@/components/reports/ReportFilterBar.vue";
+import CalendarBoard from "@/components/reports/CalendarBoard.vue";
 
 /**
  * Renderizador único de reportes. NO CONOCE NINGÚN REPORTE: resuelve la
@@ -53,6 +54,17 @@ const clinicIds = computed<string[]>(() => {
 const ownDoctorName = computed(() =>
   auth.ownDoctorId ? (ctx.value?.doctorName(auth.ownDoctorId) ?? null) : null,
 );
+
+/**
+ * Especialidad(es) del médico que mira, solo para mostrarlas: un médico
+ * multi-sede puede tener una distinta en cada clínica y ninguna es "la"
+ * correcta. No se filtra por ellas (ver el comentario en ReportFilterBar).
+ */
+const ownSpecialtyName = computed(() => {
+  if (role.value !== "medico" || !auth.ownDoctorId || !ctx.value) return null;
+  const nombres = ctx.value.specialtiesOfDoctor(auth.ownDoctorId).map((id) => ctx.value!.specialtyName(id));
+  return nombres.length > 0 ? nombres.join(", ") : null;
+});
 
 // Guarda contra corridas superpuestas: cambiar tres filtros seguidos dispara tres
 // consultas, y sin esto la más lenta puede pisar a la más reciente.
@@ -106,7 +118,13 @@ function filterLines(): string[] {
     lines.push(`Médico: ${f.doctorId ? (c?.doctorName(f.doctorId) ?? "—") : "Todos"}`);
   }
   if (report.value?.filters.includes("specialtyId")) {
-    lines.push(`Especialidad: ${f.specialtyId ? (c?.specialtyName(f.specialtyId) ?? "—") : "Todas"}`);
+    // Para un médico la especialidad se muestra pero no filtra: el archivo tiene
+    // que decir lo mismo que la pantalla, y aclarar que el dato no recortó nada.
+    lines.push(
+      role.value === "medico"
+        ? `Especialidad: ${ownSpecialtyName.value ?? "Sin especificar"} (no filtra)`
+        : `Especialidad: ${f.specialtyId ? (c?.specialtyName(f.specialtyId) ?? "—") : "Todas"}`,
+    );
   }
   if (report.value?.filters.includes("serviceId")) {
     lines.push(`Servicio: ${f.serviceId ? (c?.serviceName(f.serviceId) ?? "—") : "Todos"}`);
@@ -207,6 +225,7 @@ const rangeLabel = computed(() => describeRange(filters.value));
       :visible="report.filters"
       :role="role"
       :own-doctor-name="ownDoctorName"
+      :own-specialty-name="ownSpecialtyName"
       :doctors="ctx?.doctors ?? []"
       :specialties="ctx?.specialties ?? []"
       :services="ctx?.services ?? []"
@@ -261,6 +280,13 @@ const rangeLabel = computed(() => describeRange(filters.value));
           :values2="section.valueKey2 ? chartValues(section, 2) : undefined"
           :series-label="seriesLabel(section)"
           :series-label2="section.valueKey2 ? seriesLabel(section, 2) : undefined"
+        />
+        <CalendarBoard
+          v-else-if="section.view === 'calendar'"
+          :rows="section.rows"
+          :preset="filters.preset"
+          :desde="filters.desde"
+          :hasta="filters.hasta"
         />
 
         <!-- Los gráficos van acompañados de su tabla: el gráfico da la forma, la

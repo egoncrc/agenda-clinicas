@@ -12,6 +12,7 @@ import { buildConfirmationMessage, waMeLink } from "@/lib/messageTemplates";
 import { dateRangeFilter } from "@/lib/queryHelpers";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
 import { computeDaySlots } from "@/lib/schedule";
+import { ESTADO_LABELS, ESTADO_TONE } from "@/lib/appointmentStatus";
 import { useConfirm } from "@/composables/useConfirm";
 import AppointmentFormModal from "@/components/AppointmentFormModal.vue";
 import Card from "@/components/ui/Card.vue";
@@ -26,22 +27,6 @@ const auth = useAuthStore();
 const catalog = useCatalogStore();
 const clinica = useClinicaStore();
 const confirm = useConfirm();
-
-const ESTADO_LABELS: Record<AppointmentStatus, string> = {
-  pendiente: "Pendiente",
-  confirmada: "Confirmada",
-  cancelada: "Cancelada",
-  completada: "Completada",
-  no_show: "No se presentó",
-};
-
-const ESTADO_TONE: Record<AppointmentStatus, "success" | "warn" | "danger" | "neutral"> = {
-  pendiente: "warn",
-  confirmada: "success",
-  cancelada: "danger",
-  completada: "neutral",
-  no_show: "warn",
-};
 
 const dateFilter = ref(DateTime.now().setZone(CLINIC_TIMEZONE).toFormat("yyyy-LL-dd"));
 const doctorFilter = ref("");

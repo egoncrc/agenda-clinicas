@@ -21,15 +21,16 @@ export function now(): DateTime {
   return DateTime.now().setZone(CLINIC_TIMEZONE);
 }
 
-export function todayRange(): Interval {
-  const today = now();
-  return Interval.fromDateTimes(today.startOf("day"), today.endOf("day"));
+/** Día completo que contiene `anchor` (por defecto, hoy). */
+export function todayRange(anchor?: DateTime): Interval {
+  const d = anchor ?? now();
+  return Interval.fromDateTimes(d.startOf("day"), d.endOf("day"));
 }
 
-/** Semana ISO (lunes a domingo) que contiene "hoy". */
-export function weekRange(): Interval {
-  const today = now();
-  return Interval.fromDateTimes(today.startOf("week"), today.endOf("week"));
+/** Semana ISO (lunes a domingo) que contiene `anchor` (por defecto, hoy). */
+export function weekRange(anchor?: DateTime): Interval {
+  const d = anchor ?? now();
+  return Interval.fromDateTimes(d.startOf("week"), d.endOf("week"));
 }
 
 /** Mes calendario completo que contiene `anchor` (por defecto, hoy). */

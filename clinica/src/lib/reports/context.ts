@@ -27,8 +27,17 @@ export async function buildReportContext(clinicIds: string[]): Promise<ReportCon
   // persona (la identidad es única, ver `clinics_doctors` en CLAUDE.md). Gana la
   // primera aparición para la especialidad, que solo se usa en ocupación.
   const doctorById = new Map<string, ClinicDoctor>();
+  // ...pero las especialidades sí se acumulan todas: quedarse con la primera
+  // pierde la de la segunda sede, que es un dato real del médico.
+  const specialtiesByDoctor = new Map<string, Set<string>>();
   for (const list of doctorLists) {
-    for (const d of list) if (!doctorById.has(d.id)) doctorById.set(d.id, d);
+    for (const d of list) {
+      if (!doctorById.has(d.id)) doctorById.set(d.id, d);
+      if (!d.specialty) continue;
+      const set = specialtiesByDoctor.get(d.id) ?? new Set<string>();
+      set.add(d.specialty);
+      specialtiesByDoctor.set(d.id, set);
+    }
   }
   // Alfabético ascendente: es el orden de lectura de toda la sección de
   // Reportes (tablas, gráficos y también estos mismos selectores de filtro).
@@ -51,5 +60,6 @@ export async function buildReportContext(clinicIds: string[]): Promise<ReportCon
     specialtyName: (id) => specialtyNames.get(id) ?? "(especialidad)",
     specialtyOfService: (id) => serviceById.get(id)?.specialty ?? null,
     specialtyOfDoctor: (id) => doctorById.get(id)?.specialty ?? null,
+    specialtiesOfDoctor: (id) => [...(specialtiesByDoctor.get(id) ?? [])],
   };
 }
