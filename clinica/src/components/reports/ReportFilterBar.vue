@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useClinicaStore } from "@/stores/clinica";
 import { monthRange, toYmd } from "@/lib/dateRanges";
-import { rangeFromPreset } from "@/lib/reports/filters";
+import { rangeFromPreset, shiftRange } from "@/lib/reports/filters";
 import type { DatePreset, FilterKey, GroupBy, ReportFilters, ReportRole } from "@/lib/reports/types";
 import type { ClinicDoctor, ServiceRow, SpecialtyRow } from "@/lib/directus";
 
@@ -16,6 +16,7 @@ const props = defineProps<{
   visible: FilterKey[];
   role: ReportRole;
   ownDoctorName: string | null;
+  ownSpecialtyName: string | null;
   doctors: ClinicDoctor[];
   specialties: SpecialtyRow[];
   services: ServiceRow[];
@@ -39,8 +40,13 @@ function update(patch: Partial<ReportFilters>): void {
   emit("update:modelValue", { ...props.modelValue, ...patch });
 }
 
+/** Sin ancla: `rangeFromPreset` vuelve al presente, así que el propio botón del preset es el "volver a hoy". */
 function setPreset(preset: DatePreset): void {
   update({ preset, ...rangeFromPreset(preset, desdeYmd.value, hastaYmd.value) });
+}
+
+function navegar(direction: -1 | 1): void {
+  update(shiftRange(props.modelValue, direction));
 }
 
 // Las dos fechas del rango personalizado se aplican juntas: emitir en cada
@@ -51,8 +57,11 @@ watch([desdeYmd, hastaYmd], () => {
   update(rangeFromPreset("personalizado", desdeYmd.value, hastaYmd.value));
 });
 
+// "Día" y no "Hoy": con las flechas de navegación el período puede estar parado
+// en cualquier día, y un botón activo que dice "Hoy" mostrando el martes pasado
+// miente. El `value` sigue siendo "hoy" (lo leen CalendarBoard y defaultFilters).
 const PRESETS: { value: DatePreset; label: string }[] = [
-  { value: "hoy", label: "Hoy" },
+  { value: "hoy", label: "Día" },
   { value: "semana", label: "Semana" },
   { value: "mes", label: "Mes" },
   { value: "personalizado", label: "Personalizado" },
@@ -64,7 +73,15 @@ const GROUPS: { value: GroupBy; label: string }[] = [
   { value: "ambos", label: "Ambos" },
 ];
 
-/** Un médico se ve solo a sí mismo: el selector queda fijo y se explica por qué. */
+/**
+ * Un médico se ve solo a sí mismo: ni el selector de médico ni el de
+ * especialidad se le ofrecen, quedan fijos y se explica por qué.
+ *
+ * Ojo con la especialidad: se muestra pero NO se filtra por ella
+ * (`filters.specialtyId` queda en `null`). La especialidad de una cita es la de
+ * su SERVICIO, no la del médico (ver ReportContext), así que filtrarla le
+ * escondería sus propias citas de servicios de otra especialidad.
+ */
 const doctorLocked = computed(() => props.role === "medico");
 
 /** Los servicios y médicos se acotan a la especialidad elegida, para no ofrecer combinaciones vacías. */
@@ -109,20 +126,45 @@ function setSpecialty(value: string): void {
       <!-- Período -->
       <div v-if="shows('rango')">
         <label class="mb-1 block text-xs font-medium text-slate-500">Período</label>
-        <div class="inline-flex rounded-lg border border-slate-300 p-0.5">
+        <div class="flex items-center gap-1.5">
+          <!-- Retroceder/avanzar un día, una semana o un mes según el preset. No
+               hay límite: el rango se calcula sobre la fecha actual del filtro. -->
           <button
-            v-for="p in PRESETS"
-            :key="p.value"
+            v-if="modelValue.preset !== 'personalizado'"
             type="button"
-            class="rounded-md px-3 py-1.5 text-xs font-medium transition"
-            :class="
-              modelValue.preset === p.value
-                ? 'bg-brand-700 text-white shadow-sm'
-                : 'text-slate-600 hover:bg-slate-50'
-            "
-            @click="setPreset(p.value)"
+            class="rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50"
+            title="Período anterior"
+            aria-label="Período anterior"
+            @click="navegar(-1)"
           >
-            {{ p.label }}
+            ←
+          </button>
+          <div class="inline-flex rounded-lg border border-slate-300 p-0.5">
+            <button
+              v-for="p in PRESETS"
+              :key="p.value"
+              type="button"
+              class="rounded-md px-3 py-1.5 text-xs font-medium transition"
+              :class="
+                modelValue.preset === p.value
+                  ? 'bg-brand-700 text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-slate-50'
+              "
+              :title="modelValue.preset === p.value ? 'Volver al presente' : undefined"
+              @click="setPreset(p.value)"
+            >
+              {{ p.label }}
+            </button>
+          </div>
+          <button
+            v-if="modelValue.preset !== 'personalizado'"
+            type="button"
+            class="rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50"
+            title="Período siguiente"
+            aria-label="Período siguiente"
+            @click="navegar(1)"
+          >
+            →
           </button>
         </div>
       </div>
@@ -153,7 +195,18 @@ function setSpecialty(value: string): void {
 
       <div v-if="shows('specialtyId')">
         <label class="mb-1 block text-xs font-medium text-slate-500">Especialidad</label>
+        <!-- Mismo tratamiento que el selector de médico: al médico se le muestra
+             deshabilitada la suya (las dos, si trabaja en dos sedes) en vez de
+             esconder el control, para que entienda el alcance de lo que ve. -->
+        <input
+          v-if="doctorLocked"
+          :value="ownSpecialtyName ?? 'Sin especificar'"
+          type="text"
+          disabled
+          :class="INPUT_CLASS"
+        />
         <select
+          v-else
           :value="modelValue.specialtyId ?? ''"
           :class="INPUT_CLASS"
           @change="setSpecialty(($event.target as HTMLSelectElement).value)"

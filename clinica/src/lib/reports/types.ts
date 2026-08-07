@@ -68,7 +68,7 @@ export interface Column {
   format?: ColumnFormat;
 }
 
-export type SectionView = "table" | "bar" | "line" | "donut";
+export type SectionView = "table" | "bar" | "line" | "donut" | "calendar";
 
 export interface ReportSection {
   id: string;
@@ -118,6 +118,14 @@ export interface ReportContext {
   specialtyOfService(serviceId: string): string | null;
   /** Solo para ocupación: las horas de agenda salen de `working_hours`, que no tiene servicio. */
   specialtyOfDoctor(doctorId: string): string | null;
+  /**
+   * TODAS las especialidades del médico, una por sede en la que trabaja
+   * (`clinics_doctors.specialty` depende de la clínica). `specialtyOfDoctor`
+   * devuelve solo la primera, que para un médico multi-sede es arbitraria; esto
+   * es lo que la barra de filtros necesita para decirle a un médico a qué está
+   * ligado sin mentirle.
+   */
+  specialtiesOfDoctor(doctorId: string): string[];
 }
 
 export interface ReportDefinition {

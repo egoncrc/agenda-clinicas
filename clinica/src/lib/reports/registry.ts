@@ -7,6 +7,7 @@ import { servicesDemandReport } from "./definitions/servicesDemand";
 import { specialtiesDemandReport } from "./definitions/specialtiesDemand";
 import { patientMixReport } from "./definitions/patientMix";
 import { residenceReport } from "./definitions/residence";
+import { calendarReport } from "./definitions/calendar";
 
 /**
  * Catálogo de reportes. ES EL ÚNICO ARCHIVO QUE HAY QUE TOCAR PARA AGREGAR UNO:
@@ -24,6 +25,7 @@ export const REPORTS: ReportDefinition[] = [
   specialtiesDemandReport,
   patientMixReport,
   residenceReport,
+  calendarReport,
 ];
 
 export function getReport(id: string): ReportDefinition | undefined {
