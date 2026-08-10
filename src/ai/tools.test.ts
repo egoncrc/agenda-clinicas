@@ -55,7 +55,9 @@ vi.mock("../repositories/waitlist.js", async (importOriginal) => {
 });
 
 const { getToolHandler } = await import("./tools.js");
-const { AppointmentNotFoundError, SlotUnavailableError } = await import("../repositories/appointments.js");
+const { AppointmentNotFoundError, PatientScheduleConflictError, SlotUnavailableError } = await import(
+  "../repositories/appointments.js"
+);
 const { WaitlistEntryNotFoundError } = await import("../repositories/waitlist.js");
 
 const CLINIC = { id: "clinic-1", nombre: "Clínica Principal", activo: true, zona_horaria: "America/Guayaquil" };
@@ -260,6 +262,16 @@ describe("book_appointment", () => {
     expect(result).toEqual({ error: expect.any(String) });
   });
 
+  it("convierte PatientScheduleConflictError en {error} en vez de lanzar", async () => {
+    bookAppointmentMock.mockRejectedValue(new PatientScheduleConflictError());
+
+    const result = await getToolHandler("book_appointment")!(
+      { serviceId: "svc-1", doctorId: "doctor-1", startDateTime: "2026-07-14T09:00:00-05:00" } as never,
+      CTX,
+    );
+    expect(result).toEqual({ error: expect.any(String) });
+  });
+
   it("propaga errores inesperados (no de negocio)", async () => {
     bookAppointmentMock.mockRejectedValue(new Error("Directus caído"));
 
@@ -338,6 +350,15 @@ describe("reschedule_appointment", () => {
     rescheduleAppointmentMock.mockRejectedValue(new AppointmentNotFoundError());
     const result = await getToolHandler("reschedule_appointment")!(
       { appointmentId: "appt-ajena", newStartDateTime: "2026-07-14T09:00:00-05:00" } as never,
+      CTX,
+    );
+    expect(result).toEqual({ error: expect.any(String) });
+  });
+
+  it("convierte PatientScheduleConflictError en {error} en vez de lanzar", async () => {
+    rescheduleAppointmentMock.mockRejectedValue(new PatientScheduleConflictError());
+    const result = await getToolHandler("reschedule_appointment")!(
+      { appointmentId: "appt-1", newStartDateTime: "2026-07-14T09:00:00-05:00" } as never,
       CTX,
     );
     expect(result).toEqual({ error: expect.any(String) });

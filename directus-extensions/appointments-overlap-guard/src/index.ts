@@ -6,6 +6,7 @@ const BLOCKING_STATUSES = ["pendiente", "confirmada", "completada"];
 
 interface AppointmentPayload {
   doctor?: string;
+  patient?: string;
   service?: string;
   inicio?: string;
   fin?: string;
@@ -56,15 +57,16 @@ export default defineHook(({ filter }, { services, database }) => {
       knex: database,
     });
 
-    let { doctor, service, inicio, fin, estado, clinic } = payload;
+    let { doctor, patient, service, inicio, fin, estado, clinic } = payload;
 
     // En un update el payload puede venir parcial: se completa con el
     // registro actual para poder evaluar el solape correctamente.
-    if (existingId && (!doctor || !service || !inicio || !fin || !estado || !clinic)) {
+    if (existingId && (!doctor || !patient || !service || !inicio || !fin || !estado || !clinic)) {
       const current = (await appointmentsService.readOne(existingId, {
-        fields: ["doctor", "service", "inicio", "fin", "estado", "clinic"],
+        fields: ["doctor", "patient", "service", "inicio", "fin", "estado", "clinic"],
       })) as AppointmentPayload;
       doctor = doctor ?? current.doctor;
+      patient = patient ?? current.patient;
       service = service ?? current.service;
       inicio = inicio ?? current.inicio;
       fin = fin ?? current.fin;
@@ -108,6 +110,33 @@ export default defineHook(({ filter }, { services, database }) => {
         reason:
           "La cita se solapa con otra existente para este odontólogo (incluyendo el tiempo de preparación entre citas).",
       });
+    }
+
+    // Un paciente no puede estar en dos consultas a la vez EN LA MISMA
+    // CLÍNICA, sin importar el odontólogo o la especialidad — a diferencia
+    // del chequeo anterior, este sí se acota a `clinic` y no aplica ningún
+    // buffer (el buffer es tiempo de preparación del médico, no del paciente).
+    if (patient) {
+      const patientClashes = await appointmentsService.readByQuery({
+        filter: {
+          _and: [
+            { patient: { _eq: patient } },
+            { clinic: { _eq: clinic } },
+            { estado: { _in: BLOCKING_STATUSES } },
+            { inicio: { _lt: fin } },
+            { fin: { _gt: inicio } },
+            ...(existingId ? [{ id: { _neq: existingId } }] : []),
+          ],
+        },
+        limit: 1,
+        fields: ["id"],
+      });
+
+      if (patientClashes.length > 0) {
+        throw new ForbiddenError({
+          reason: "Este paciente ya tiene otra cita que se traslapa con este horario en esta clínica.",
+        });
+      }
     }
 
     // Las ausencias sí se acotan a la clínica de la cita: un médico ausente en

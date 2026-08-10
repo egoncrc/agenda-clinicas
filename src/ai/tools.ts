@@ -11,6 +11,7 @@ import {
   bookAppointment,
   cancelAppointment,
   listUpcomingAppointmentsForPatients,
+  PatientScheduleConflictError,
   rescheduleAppointment,
   SlotUnavailableError,
 } from "../repositories/appointments.js";
@@ -248,7 +249,9 @@ const bookAppointmentTool: ToolDefinition = {
         estado: appointment.estado,
       };
     } catch (error) {
-      if (error instanceof SlotUnavailableError) return { error: error.message };
+      if (error instanceof SlotUnavailableError || error instanceof PatientScheduleConflictError) {
+        return { error: error.message };
+      }
       throw error;
     }
   },
@@ -307,7 +310,11 @@ const rescheduleAppointmentTool: ToolDefinition = {
       const appointment = await rescheduleAppointment(input.appointmentId, ctx.clinic.id, ids, start.toJSDate());
       return { appointmentId: appointment.id, inicioLocal: formatLocal(appointment.inicio, ctx.clinic) };
     } catch (error) {
-      if (error instanceof SlotUnavailableError || error instanceof AppointmentNotFoundError) {
+      if (
+        error instanceof SlotUnavailableError ||
+        error instanceof AppointmentNotFoundError ||
+        error instanceof PatientScheduleConflictError
+      ) {
         return { error: error.message };
       }
       throw error;

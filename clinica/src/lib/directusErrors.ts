@@ -2,16 +2,31 @@ import { isDirectusError } from "@directus/sdk";
 import { PASSWORD_RULES } from "@/lib/passwordPolicy";
 
 /**
- * Mensaje legible para errores de Directus. Distingue dos causas que ambas
+ * Mensaje legible para errores de Directus. Distingue tres causas que todas
  * llegan como 403 FORBIDDEN pero significan cosas distintas:
- * - El hook anti-solapes de Directus (directus-extensions/appointments-overlap-guard)
+ * - El hook anti-solapes de citas (directus-extensions/appointments-overlap-guard)
  *   rechaza la escritura con un mensaje que menciona "solapa".
+ * - El hook anti-superposiciones de horario laboral
+ *   (directus-extensions/working-hours-guard) usa "superpone". Se comprueba antes
+ *   que el otro justamente para no confundir los dos mensajes.
+ * - El mismo hook anti-solapes de citas, pero para el chequeo por PACIENTE
+ *   (no puede tener dos citas que se traslapen en la misma clínica, sin
+ *   importar el médico), usa "traslapa" — palabra distinta a propósito para
+ *   no mezclarse con el mensaje de solape por médico.
  * - Un rechazo de permisos liso y llano (ej. el rol Doctor no tiene permiso
  *   de `create` en `appointments` — solo Recepción puede crear citas, ver CLAUDE.md).
  */
 export function friendlyErrorMessage(error: unknown, fallback: string): string {
   if (isDirectusError(error)) {
     const message = error.errors[0]?.message ?? "";
+    if (message.includes("superpone")) {
+      // El guard no dice en qué clínica está el bloque rival: sería filtrar datos
+      // de otra sede a quien no tiene permiso de verlos.
+      return "Ese horario se superpone con otro bloque del mismo médico (puede ser en otra clínica).";
+    }
+    if (message.includes("traslapa")) {
+      return "Ese paciente ya tiene otra cita que se traslapa con este horario en esta clínica.";
+    }
     if (message.includes("solapa")) {
       return "Ese horario se solapa con otra cita de ese médico (incluyendo el tiempo de preparación entre citas).";
     }

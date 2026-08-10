@@ -37,6 +37,21 @@ export class AppointmentNotFoundError extends Error {
   }
 }
 
+/**
+ * Se lanza cuando el paciente ya tiene otra cita activa que se traslapa con
+ * el horario propuesto EN LA MISMA CLÍNICA, sin importar el odontólogo o la
+ * especialidad — un paciente no puede estar en dos consultas a la vez. A
+ * diferencia del chequeo por odontólogo (`hasOverlap` con `service.bufferMin`),
+ * este es overlap estricto de `inicio`/`fin`: el buffer es tiempo de
+ * preparación del médico, no del paciente.
+ */
+export class PatientScheduleConflictError extends Error {
+  constructor() {
+    super("Ya tienes otra cita en ese horario en esta misma clínica.");
+    this.name = "PatientScheduleConflictError";
+  }
+}
+
 function toAppointment(row: AppointmentRow): Appointment {
   return {
     id: row.id,
@@ -67,6 +82,28 @@ async function blockingAppointmentsForDoctor(doctorId: string): Promise<Appointm
   const rows = await directus.request(
     readItems("appointments", {
       filter: { doctor: { _eq: doctorId }, estado: { _in: [...BLOCKING_STATUSES] } },
+      limit: -1,
+    }),
+  );
+  return rows.map(toAppointment);
+}
+
+/**
+ * Citas activas del paciente EN esta clínica (a diferencia del chequeo por
+ * odontólogo, este sí se acota a la clínica: un paciente puede tener una cita
+ * en otra sede a la misma hora sin conflicto real para él).
+ */
+async function blockingAppointmentsForPatientInClinic(
+  patientId: string,
+  clinicId: string,
+): Promise<Appointment[]> {
+  const rows = await directus.request(
+    readItems("appointments", {
+      filter: {
+        patient: { _eq: patientId },
+        clinic: { _eq: clinicId },
+        estado: { _in: [...BLOCKING_STATUSES] },
+      },
       limit: -1,
     }),
   );
@@ -116,6 +153,11 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Appo
   const existing = await blockingAppointmentsForDoctor(input.doctorId);
   if (hasOverlap({ inicio: input.inicio, fin: fin.toJSDate() }, existing, service.bufferMin, config.CLINIC_TIMEZONE)) {
     throw new SlotUnavailableError();
+  }
+
+  const existingForPatient = await blockingAppointmentsForPatientInClinic(input.patientId, input.clinicId);
+  if (hasOverlap({ inicio: input.inicio, fin: fin.toJSDate() }, existingForPatient, 0, config.CLINIC_TIMEZONE)) {
+    throw new PatientScheduleConflictError();
   }
 
   const timeOff = await timeOffForDoctor(input.doctorId, input.clinicId);
@@ -226,6 +268,13 @@ export async function rescheduleAppointment(
   );
   if (hasOverlap({ inicio: newInicio, fin: fin.toJSDate() }, existing, service.bufferMin, config.CLINIC_TIMEZONE)) {
     throw new SlotUnavailableError();
+  }
+
+  const existingForPatient = (
+    await blockingAppointmentsForPatientInClinic(existingRow.patient, existingRow.clinic)
+  ).filter((a) => a.id !== appointmentId);
+  if (hasOverlap({ inicio: newInicio, fin: fin.toJSDate() }, existingForPatient, 0, config.CLINIC_TIMEZONE)) {
+    throw new PatientScheduleConflictError();
   }
 
   const timeOff = await timeOffForDoctor(existingRow.doctor, clinicId);
