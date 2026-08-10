@@ -284,6 +284,7 @@ function openEdit(appointment: AppointmentRow): void {
 
 async function handleSaved(): Promise<void> {
   showModal.value = false;
+  slotsServiceId.value = slotsServices.value[0]?.id ?? "";
   await load({ silent: true });
 }
 

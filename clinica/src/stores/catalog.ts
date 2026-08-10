@@ -65,10 +65,10 @@ export const useCatalogStore = defineStore("catalog", () => {
     return doctors.value.filter((d) => d.specialty === specialtyId);
   }
 
-  /** Servicios de una especialidad (o todos si no se indica). */
+  /** Servicios de una especialidad (o todos si no se indica), ordenados por duración ascendente y, en empate, alfabéticamente. */
   function servicesBySpecialty(specialtyId?: string): ServiceRow[] {
-    if (!specialtyId) return services.value;
-    return services.value.filter((s) => s.specialty === specialtyId);
+    const list = specialtyId ? services.value.filter((s) => s.specialty === specialtyId) : services.value.slice();
+    return list.sort((a, b) => a.duracion_min - b.duracion_min || a.nombre.localeCompare(b.nombre));
   }
 
   /** Limpia la caché: necesario al cambiar de cuenta en la misma pestaña, para no arrastrar la lista (y sus permisos) del usuario anterior. */
