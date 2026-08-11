@@ -20,15 +20,23 @@ const listActiveSpecialtiesMock = vi.fn();
 const getAvailableSlotsMock = vi.fn();
 const bookAppointmentMock = vi.fn();
 const findOrCreatePatientMock = vi.fn();
-const findTitularByPhoneMock = vi.fn();
+const listPatientsByPhoneMock = vi.fn();
+const getPatientMock = vi.fn();
+const createDependentPatientMock = vi.fn();
 const updatePatientNameMock = vi.fn();
-const resolveOrCreateHouseholdPatientMock = vi.fn();
 const getClinicByIdMock = vi.fn();
 
 class MockSlotUnavailableError extends Error {
   constructor() {
     super("El horario solicitado ya no está disponible.");
     this.name = "SlotUnavailableError";
+  }
+}
+
+class MockPatientScheduleConflictError extends Error {
+  constructor() {
+    super("Ya tienes otra cita en ese horario en esta misma clínica.");
+    this.name = "PatientScheduleConflictError";
   }
 }
 
@@ -39,12 +47,14 @@ vi.mock("./repositories/availability.js", () => ({ getAvailableSlots: getAvailab
 vi.mock("./repositories/appointments.js", () => ({
   bookAppointment: bookAppointmentMock,
   SlotUnavailableError: MockSlotUnavailableError,
+  PatientScheduleConflictError: MockPatientScheduleConflictError,
 }));
 vi.mock("./repositories/patients.js", () => ({
   findOrCreatePatient: findOrCreatePatientMock,
-  findTitularByPhone: findTitularByPhoneMock,
+  listPatientsByPhone: listPatientsByPhoneMock,
+  getPatient: getPatientMock,
+  createDependentPatient: createDependentPatientMock,
   updatePatientName: updatePatientNameMock,
-  resolveOrCreateHouseholdPatient: resolveOrCreateHouseholdPatientMock,
 }));
 vi.mock("./repositories/clinics.js", () => ({ getClinicById: getClinicByIdMock }));
 
@@ -71,9 +81,10 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
     ]);
     bookAppointmentMock.mockReset();
     findOrCreatePatientMock.mockReset().mockResolvedValue({ id: "patient-1", telefono: TEL });
-    findTitularByPhoneMock.mockReset().mockResolvedValue(null);
+    listPatientsByPhoneMock.mockReset().mockResolvedValue([]);
+    getPatientMock.mockReset();
+    createDependentPatientMock.mockReset();
     updatePatientNameMock.mockReset().mockResolvedValue(undefined);
-    resolveOrCreateHouseholdPatientMock.mockReset();
     getClinicByIdMock.mockReset().mockResolvedValue({ id: CLINIC_ID, nombre: "Clínica Principal", activo: true });
 
     const app = express();
@@ -156,35 +167,43 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
     });
   });
 
-  describe("GET /titular", () => {
-    it("devuelve el nombre si ya hay un titular con nombre bajo ese número", async () => {
-      findTitularByPhoneMock.mockResolvedValue({ id: "patient-1", telefono: TEL, nombre: "María", titular: true });
+  describe("GET /household", () => {
+    it("devuelve a todas las personas registradas bajo ese número, titular y familiares", async () => {
+      listPatientsByPhoneMock.mockResolvedValue([
+        { id: "patient-1", telefono: TEL, nombre: "María", titular: true },
+        { id: "patient-2", telefono: TEL, nombre: "Juan", titular: false },
+      ]);
 
-      const res = await fetch(`${baseUrl}/public/booking/titular?token=${TOKEN}&clinica=${CLINIC_ID}&telefono=${encodeURIComponent(TEL)}`);
+      const res = await fetch(`${baseUrl}/public/booking/household?token=${TOKEN}&clinica=${CLINIC_ID}&telefono=${encodeURIComponent(TEL)}`);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ nombre: "María" });
-      expect(findTitularByPhoneMock).toHaveBeenCalledWith(TEL, CLINIC_ID);
+      expect(await res.json()).toEqual({
+        patients: [
+          { id: "patient-1", nombre: "María", titular: true },
+          { id: "patient-2", nombre: "Juan", titular: false },
+        ],
+      });
+      expect(listPatientsByPhoneMock).toHaveBeenCalledWith(TEL, CLINIC_ID);
     });
 
-    it("devuelve nombre null si el número no tiene titular todavía (no crea nada)", async () => {
-      findTitularByPhoneMock.mockResolvedValue(null);
+    it("devuelve lista vacía si el número no tiene a nadie todavía (no crea nada)", async () => {
+      listPatientsByPhoneMock.mockResolvedValue([]);
 
-      const res = await fetch(`${baseUrl}/public/booking/titular?token=${TOKEN}&clinica=${CLINIC_ID}&telefono=${encodeURIComponent(TEL)}`);
+      const res = await fetch(`${baseUrl}/public/booking/household?token=${TOKEN}&clinica=${CLINIC_ID}&telefono=${encodeURIComponent(TEL)}`);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ nombre: null });
+      expect(await res.json()).toEqual({ patients: [] });
     });
 
-    it("devuelve nombre null si el titular existe pero aún no tiene nombre", async () => {
-      findTitularByPhoneMock.mockResolvedValue({ id: "patient-1", telefono: TEL, titular: true });
+    it("una persona sin nombre aparece con nombre null, no se filtra", async () => {
+      listPatientsByPhoneMock.mockResolvedValue([{ id: "patient-1", telefono: TEL, titular: true }]);
 
-      const res = await fetch(`${baseUrl}/public/booking/titular?token=${TOKEN}&clinica=${CLINIC_ID}&telefono=${encodeURIComponent(TEL)}`);
-      expect(await res.json()).toEqual({ nombre: null });
+      const res = await fetch(`${baseUrl}/public/booking/household?token=${TOKEN}&clinica=${CLINIC_ID}&telefono=${encodeURIComponent(TEL)}`);
+      expect(await res.json()).toEqual({ patients: [{ id: "patient-1", nombre: null, titular: true }] });
     });
 
     it("rechaza con 400 si el teléfono no tiene formato válido", async () => {
-      const res = await fetch(`${baseUrl}/public/booking/titular?token=${TOKEN}&clinica=${CLINIC_ID}&telefono=no-es-un-telefono`);
+      const res = await fetch(`${baseUrl}/public/booking/household?token=${TOKEN}&clinica=${CLINIC_ID}&telefono=no-es-un-telefono`);
       expect(res.status).toBe(400);
-      expect(findTitularByPhoneMock).not.toHaveBeenCalled();
+      expect(listPatientsByPhoneMock).not.toHaveBeenCalled();
     });
   });
 
@@ -204,7 +223,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       estado: "pendiente" as const,
     };
 
-    it("agenda la cita a partir del teléfono ingresado por la propia persona", async () => {
+    it("con nombre (número sin nadie todavía) crea al titular y agenda para él", async () => {
       bookAppointmentMock.mockResolvedValue(CREATED_ROW);
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
@@ -234,7 +253,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       expect(findOrCreatePatientMock).not.toHaveBeenCalled();
     });
 
-    it("no actualiza el nombre si no cambió", async () => {
+    it("no actualiza el nombre del titular si ya tenía uno", async () => {
       findOrCreatePatientMock.mockResolvedValue({ id: "patient-1", telefono: TEL, nombre: "Juan Pérez" });
       bookAppointmentMock.mockResolvedValue(CREATED_ROW);
       await fetch(`${baseUrl}/public/booking/appointments`, {
@@ -245,50 +264,50 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       expect(updatePatientNameMock).not.toHaveBeenCalled();
     });
 
-    it("no sobrescribe el nombre del titular aunque el formulario traiga uno distinto (puede ser un familiar reservando con el mismo teléfono)", async () => {
-      findOrCreatePatientMock.mockResolvedValue({ id: "patient-1", telefono: TEL, nombre: "María" });
-      bookAppointmentMock.mockResolvedValue(CREATED_ROW);
-      await fetch(`${baseUrl}/public/booking/appointments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, nombre: "Juan", ...APPOINTMENT_BODY }),
-      });
-      expect(updatePatientNameMock).not.toHaveBeenCalled();
-    });
-
-    it("con pacienteNombre agenda para esa persona bajo el mismo teléfono, no para el titular", async () => {
-      findOrCreatePatientMock.mockResolvedValue({ id: "patient-1", telefono: TEL, nombre: "María" });
-      resolveOrCreateHouseholdPatientMock.mockResolvedValue({
-        patient: { id: "patient-hijo", telefono: TEL, nombre: "Juan", titular: false },
-        ambiguous: false,
-      });
+    it("con patientId agenda para la persona ya elegida de GET /household, sin crear ni renombrar a nadie", async () => {
+      getPatientMock.mockResolvedValue({ id: "patient-hijo", telefono: TEL, nombre: "Juan", titular: false, clinic: CLINIC_ID });
       bookAppointmentMock.mockResolvedValue(CREATED_ROW);
 
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, nombre: "María", pacienteNombre: "Juan", ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, patientId: "patient-hijo", ...APPOINTMENT_BODY }),
       });
 
       expect(res.status).toBe(201);
-      expect(resolveOrCreateHouseholdPatientMock).toHaveBeenCalledWith(TEL, "Juan", CLINIC_ID);
+      expect(getPatientMock).toHaveBeenCalledWith("patient-hijo", CLINIC_ID);
+      expect(findOrCreatePatientMock).not.toHaveBeenCalled();
+      expect(updatePatientNameMock).not.toHaveBeenCalled();
       expect(bookAppointmentMock).toHaveBeenCalledWith(expect.objectContaining({ patientId: "patient-hijo" }));
     });
 
-    it("responde 400 si pacienteNombre es ambiguo entre varios familiares del mismo número", async () => {
-      resolveOrCreateHouseholdPatientMock.mockResolvedValue({
-        patient: { id: "patient-a", telefono: TEL, nombre: "Juan", titular: false },
-        ambiguous: true,
-      });
+    it("responde 400 si el patientId no corresponde al teléfono indicado (ni tampoco si no existe: mismo chequeo)", async () => {
+      getPatientMock.mockResolvedValue({ id: "patient-otro", telefono: "+50699999999", nombre: "Otra", titular: true, clinic: CLINIC_ID });
 
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, nombre: "María", pacienteNombre: "Juan", ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, patientId: "patient-otro", ...APPOINTMENT_BODY }),
       });
 
       expect(res.status).toBe(400);
       expect(bookAppointmentMock).not.toHaveBeenCalled();
+    });
+
+    it("con pacienteNombre (número con gente ya registrada) crea un familiar nuevo y agenda para él", async () => {
+      createDependentPatientMock.mockResolvedValue({ id: "patient-hijo2", telefono: TEL, nombre: "Pedro", titular: false });
+      bookAppointmentMock.mockResolvedValue(CREATED_ROW);
+
+      const res = await fetch(`${baseUrl}/public/booking/appointments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, pacienteNombre: "Pedro", ...APPOINTMENT_BODY }),
+      });
+
+      expect(res.status).toBe(201);
+      expect(createDependentPatientMock).toHaveBeenCalledWith(TEL, "Pedro", CLINIC_ID);
+      expect(findOrCreatePatientMock).not.toHaveBeenCalled();
+      expect(bookAppointmentMock).toHaveBeenCalledWith(expect.objectContaining({ patientId: "patient-hijo2" }));
     });
 
     it("responde 409 si el horario ya no está disponible", async () => {
@@ -296,9 +315,30 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, nombre: "Juan", ...APPOINTMENT_BODY }),
       });
       expect(res.status).toBe(409);
+    });
+
+    it("responde 409 si el paciente ya tiene otra cita que se traslapa en esta clínica", async () => {
+      bookAppointmentMock.mockRejectedValue(new MockPatientScheduleConflictError());
+      const res = await fetch(`${baseUrl}/public/booking/appointments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, nombre: "Juan", ...APPOINTMENT_BODY }),
+      });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ error: "Ya tienes otra cita en ese horario en esta misma clínica." });
+    });
+
+    it("responde 400 si no se indica ni patientId, ni nombre, ni pacienteNombre", async () => {
+      const res = await fetch(`${baseUrl}/public/booking/appointments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, ...APPOINTMENT_BODY }),
+      });
+      expect(res.status).toBe(400);
+      expect(bookAppointmentMock).not.toHaveBeenCalled();
     });
 
     it("responde 400 si faltan campos", async () => {

@@ -82,9 +82,6 @@ async function loadContext(): Promise<void> {
 // --- Formulario ---
 const telefono = ref("");
 const nombre = ref("");
-/** Un mismo teléfono puede tener varias personas (ej. un hijo bajo el número de un padre). */
-const esParaOtraPersona = ref(false);
-const pacienteNombre = ref("");
 const specialtyId = ref("");
 const doctorId = ref("");
 const serviceId = ref("");
@@ -191,45 +188,93 @@ const confirmedInicio = ref<Date | null>(null);
 const PHONE_RE = /^\+?\d{7,15}$/;
 const phoneValid = computed(() => PHONE_RE.test(telefono.value.trim()));
 
+interface HouseholdPatient {
+  id: string;
+  nombre: string | null;
+  titular: boolean;
+}
+
 /**
- * Nombre del titular ya registrado bajo el teléfono digitado, si lo hay (null
- * mientras no se ha buscado o si el número no tiene titular con nombre aún).
- * Cuando se conoce, no hace falta volver a pedirlo: se entiende que la cita es
- * para esa persona, salvo que se marque "es para otra persona".
+ * Personas ya registradas bajo el teléfono digitado (titular y familiares), y
+ * la persona elegida entre ellas. Un mismo teléfono puede tener varias (ej. un
+ * hijo bajo el número de un padre) — ver GET /household en src/publicBooking.ts.
  */
-const titularNombre = ref<string | null>(null);
+const household = ref<HouseholdPatient[]>([]);
+/** Distingue "todavía no se buscó/está buscando" de "se buscó y esto es lo que hay", igual que en el panel. */
+const householdChecked = ref(false);
+const loadingHousehold = ref(false);
+const selectedPatientId = ref<string | null>(null);
+/** El teléfono ya tiene gente registrada, pero la cita es para alguien nuevo (ej. otro hijo). */
+const addingNewPerson = ref(false);
 let lookupTimer: ReturnType<typeof setTimeout> | undefined;
 
-async function lookupTitular(telefonoTrim: string): Promise<void> {
+async function loadHousehold(telefonoTrim: string): Promise<void> {
+  loadingHousehold.value = true;
   try {
     const params = new URLSearchParams({ ...tokenParams(), telefono: telefonoTrim });
-    const res = await fetch(`${BOOKING_API_URL}/titular?${params.toString()}`);
-    if (!res.ok) return;
-    const body = await res.json();
-    titularNombre.value = body.nombre ?? null;
+    const res = await fetch(`${BOOKING_API_URL}/household?${params.toString()}`);
+    household.value = res.ok ? ((await res.json()).patients ?? []) : [];
   } catch {
-    // Falla silenciosa: en el peor caso se vuelve a pedir el nombre, no bloquea el agendamiento.
-    titularNombre.value = null;
+    // Falla silenciosa: en el peor caso se pide el nombre de nuevo, no bloquea el agendamiento.
+    household.value = [];
+  } finally {
+    loadingHousehold.value = false;
+    householdChecked.value = true;
   }
 }
 
 watch(telefono, (value) => {
-  titularNombre.value = null;
+  household.value = [];
+  householdChecked.value = false;
+  selectedPatientId.value = null;
+  addingNewPerson.value = false;
+  nombre.value = "";
   clearTimeout(lookupTimer);
   const telefonoTrim = value.trim();
   if (!PHONE_RE.test(telefonoTrim)) return;
-  lookupTimer = setTimeout(() => void lookupTitular(telefonoTrim), 400);
+  lookupTimer = setTimeout(() => void loadHousehold(telefonoTrim), 400);
 });
 
-/** No hace falta pedir el nombre propio si el teléfono ya tiene un titular conocido. */
-const needsOwnName = computed(() => !titularNombre.value);
+const selectedPatient = computed(() => household.value.find((p) => p.id === selectedPatientId.value) ?? null);
+
+function selectPatient(p: HouseholdPatient): void {
+  selectedPatientId.value = p.id;
+  addingNewPerson.value = false;
+  nombre.value = p.nombre ?? "";
+}
+
+function startNewPerson(): void {
+  selectedPatientId.value = null;
+  addingNewPerson.value = true;
+  nombre.value = "";
+}
+
+/**
+ * Hace falta el nombre cuando: el teléfono no tiene a nadie todavía (la
+ * primera persona registrada queda como titular), se está dando de alta a
+ * alguien nuevo bajo un teléfono que ya tiene gente, o la persona elegida de
+ * la lista existe pero aún no tiene nombre (ej. la creó el bot de WhatsApp
+ * solo con el teléfono).
+ */
+const needsName = computed(() => {
+  if (!householdChecked.value) return false;
+  if (household.value.length === 0) return true;
+  if (addingNewPerson.value) return true;
+  if (selectedPatient.value) return !selectedPatient.value.nombre;
+  return false;
+});
+
+/** Ya se identificó para quién es la cita: alguien de la lista, alguien nuevo, o (número sin nadie) el nombre propio. */
+const patientResolved = computed(
+  () => !!selectedPatientId.value || addingNewPerson.value || (householdChecked.value && household.value.length === 0),
+);
 
 const canSubmit = computed(
   () =>
     !!(
       phoneValid.value &&
-      (!needsOwnName.value || nombre.value.trim()) &&
-      (!esParaOtraPersona.value || pacienteNombre.value.trim()) &&
+      patientResolved.value &&
+      (!needsName.value || nombre.value.trim()) &&
       specialtyId.value &&
       doctorId.value &&
       serviceId.value &&
@@ -246,18 +291,25 @@ async function handleSubmit(): Promise<void> {
     const inicio = DateTime.fromFormat(`${date.value} ${time.value}`, "yyyy-LL-dd HH:mm", {
       zone: CLINIC_TIMEZONE,
     });
+    const payload: Record<string, unknown> = {
+      ...tokenParams(),
+      telefono: telefono.value.trim(),
+      doctorId: doctorId.value,
+      serviceId: serviceId.value,
+      inicio: inicio.toISO(),
+    };
+    if (selectedPatientId.value) {
+      payload.patientId = selectedPatientId.value;
+      if (needsName.value) payload.nombre = nombre.value.trim();
+    } else if (addingNewPerson.value) {
+      payload.pacienteNombre = nombre.value.trim();
+    } else {
+      payload.nombre = nombre.value.trim();
+    }
     const res = await fetch(`${BOOKING_API_URL}/appointments`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...tokenParams(),
-        telefono: telefono.value.trim(),
-        nombre: needsOwnName.value ? nombre.value.trim() : undefined,
-        pacienteNombre: esParaOtraPersona.value ? pacienteNombre.value.trim() : undefined,
-        doctorId: doctorId.value,
-        serviceId: serviceId.value,
-        inicio: inicio.toISO(),
-      }),
+      body: JSON.stringify(payload),
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? "No se pudo agendar la cita.");
@@ -313,38 +365,41 @@ onMounted(loadContext);
           <p v-if="telefono && !phoneValid" class="mt-1 text-xs text-red-600">
             Ingresa un número de teléfono válido.
           </p>
-          <p v-else-if="titularNombre" class="mt-1 text-xs text-emerald-700">
-            Encontramos tu registro: <strong>{{ titularNombre }}</strong>
-          </p>
+          <p v-else-if="loadingHousehold" class="mt-1 text-xs text-slate-500">Buscando…</p>
         </div>
 
-        <div v-if="needsOwnName">
-          <label class="mb-1 block text-sm font-medium text-slate-700">Nombre completo</label>
+        <!-- Personas ya registradas bajo este teléfono (titular y familiares):
+             se elige entre ellas en vez de volver a pedir el nombre de quien ya
+             está en el sistema. Ver `loadHousehold` / GET /household. -->
+        <div v-if="phoneValid && householdChecked && household.length > 0">
+          <label class="mb-1 block text-sm font-medium text-slate-700">¿Para quién es la cita?</label>
+          <ul class="divide-y divide-slate-100 rounded-md border border-slate-200">
+            <li
+              v-for="p in household"
+              :key="p.id"
+              class="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-slate-50"
+              :class="selectedPatientId === p.id ? 'bg-brand-50 font-medium text-brand-700' : ''"
+              @click="selectPatient(p)"
+            >
+              <span>{{ p.nombre || "(sin nombre)" }}</span>
+              <span v-if="p.titular" class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">Titular</span>
+            </li>
+            <li
+              class="cursor-pointer px-3 py-2 text-sm font-medium text-brand-700 hover:bg-slate-50"
+              :class="addingNewPerson ? 'bg-brand-50' : ''"
+              @click="startNewPerson"
+            >
+              + Otra persona (ej. un hijo/a)
+            </li>
+          </ul>
+        </div>
+
+        <div v-if="needsName">
+          <label class="mb-1 block text-sm font-medium text-slate-700">
+            {{ addingNewPerson ? "Nombre de quien recibirá la cita" : "Nombre completo" }}
+          </label>
           <input
             v-model="nombre"
-            type="text"
-            required
-            placeholder="Tu nombre completo"
-            class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
-          />
-        </div>
-
-        <div class="flex items-center gap-2">
-          <input
-            id="es-para-otra-persona"
-            v-model="esParaOtraPersona"
-            type="checkbox"
-            class="h-4 w-4 rounded border-slate-300 text-brand-700 focus:ring-brand-500"
-          />
-          <label for="es-para-otra-persona" class="text-sm text-slate-700">
-            Es para otra persona (ej. un hijo/a)
-          </label>
-        </div>
-
-        <div v-if="esParaOtraPersona">
-          <label class="mb-1 block text-sm font-medium text-slate-700">Nombre de quien recibirá la cita</label>
-          <input
-            v-model="pacienteNombre"
             type="text"
             required
             placeholder="Nombre completo"
