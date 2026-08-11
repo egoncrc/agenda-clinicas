@@ -9,11 +9,12 @@ import { listActiveDoctors } from "./repositories/doctors.js";
 import { listActiveServices } from "./repositories/services.js";
 import { listActiveSpecialties } from "./repositories/specialties.js";
 import { getAvailableSlots } from "./repositories/availability.js";
-import { bookAppointment, SlotUnavailableError } from "./repositories/appointments.js";
+import { bookAppointment, PatientScheduleConflictError, SlotUnavailableError } from "./repositories/appointments.js";
 import {
+  createDependentPatient,
   findOrCreatePatient,
-  findTitularByPhone,
-  resolveOrCreateHouseholdPatient,
+  getPatient,
+  listPatientsByPhone,
   updatePatientName,
 } from "./repositories/patients.js";
 
@@ -181,15 +182,14 @@ publicBookingRouter.get(
 );
 
 /**
- * Nombre del titular ya registrado bajo un teléfono, para que el formulario no
- * vuelva a pedirlo si ya se conoce (y para no confundir "cita para el titular"
- * con "cita para otra persona" una vez que se sabe quién es el titular).
- * No crea nada: `nombre: null` cubre tanto "el número no existe todavía" como
- * "el titular existe pero aún no tiene nombre" — en ambos casos el formulario
- * debe seguir pidiéndolo.
+ * Todas las personas ya registradas bajo un teléfono, en esta clínica (titular
+ * y familiares) — para que el formulario ofrezca elegir entre ellas en vez de
+ * volver a pedir el nombre de alguien que ya está en el sistema. Lista vacía
+ * cubre tanto "el número no existe todavía" como el caso normal de un titular
+ * sin familiares. No crea nada.
  */
 publicBookingRouter.get(
-  "/titular",
+  "/household",
   readRateLimit,
   asyncHandler(async (req, res) => {
     const { telefono } = req.query;
@@ -197,30 +197,42 @@ publicBookingRouter.get(
       res.status(400).json({ error: "Número de teléfono inválido." });
       return;
     }
-    const titular = await findTitularByPhone(telefono.trim(), req.clinic!.id);
-    res.json({ nombre: titular?.nombre?.trim() || null });
+    const group = await listPatientsByPhone(telefono.trim(), req.clinic!.id);
+    res.json({
+      patients: group.map((p) => ({ id: p.id, nombre: p.nombre?.trim() || null, titular: Boolean(p.titular) })),
+    });
   }),
 );
 
 /**
  * Crea la cita: el teléfono lo escribe la propia persona (el link ya no está
  * atado a un número verificado), así que se valida el formato acá antes de
- * usarlo como identidad del paciente. Busca/crea al paciente por teléfono,
- * actualiza el nombre si se dio uno nuevo, y agenda con las mismas reglas que
- * el resto del sistema.
+ * usarlo como identidad del paciente. El paciente llega de una de tres formas,
+ * mutuamente excluyentes:
+ * - `patientId`: ya está en la lista que devolvió GET /household, se agenda
+ *   para esa persona (y se completa su nombre si aún no tenía uno).
+ * - `nombre`: el teléfono no tiene a nadie registrado todavía; se crea como
+ *   titular.
+ * - `pacienteNombre`: el teléfono ya tiene gente registrada pero la cita es
+ *   para alguien nuevo (ej. un hijo); se crea como familiar, sin tocar al
+ *   titular ni a nadie más del grupo.
  */
 publicBookingRouter.post(
   "/appointments",
   writeRateLimit,
   asyncHandler(async (req, res) => {
     const clinic = req.clinic!;
-    const { telefono, nombre, pacienteNombre, doctorId, serviceId, inicio } = req.body as Record<string, unknown>;
+    const { telefono, patientId, nombre, pacienteNombre, doctorId, serviceId, inicio } = req.body as Record<
+      string,
+      unknown
+    >;
 
     if (
       typeof telefono !== "string" ||
       typeof doctorId !== "string" ||
       typeof serviceId !== "string" ||
       typeof inicio !== "string" ||
+      (patientId !== undefined && typeof patientId !== "string") ||
       (nombre !== undefined && typeof nombre !== "string") ||
       (pacienteNombre !== undefined && typeof pacienteNombre !== "string")
     ) {
@@ -241,35 +253,43 @@ publicBookingRouter.post(
     }
 
     try {
-      const titular = await findOrCreatePatient(telefonoTrim, clinic.id);
+      const patientIdTrim = patientId?.trim();
       const nombreTrim = nombre?.trim();
-      // Solo completa el nombre del titular si aún no tiene uno: un teléfono puede
-      // tener varios pacientes (ej. un hijo bajo el número de la madre), así que
-      // nunca se debe sobrescribir el nombre ya guardado del titular.
-      if (nombreTrim && !titular.nombre) {
-        await updatePatientName(titular.id, nombreTrim);
-      }
-
-      // pacienteNombre: la cita es para otra persona (ej. un hijo) bajo el mismo
-      // teléfono, no para quien llena el formulario. Se resuelve/crea sin pisar
-      // al titular, igual que el bot de WhatsApp lo hace en una conversación.
       const pacienteNombreTrim = pacienteNombre?.trim();
-      let patientId = titular.id;
-      if (pacienteNombreTrim) {
-        const { patient, ambiguous } = await resolveOrCreateHouseholdPatient(telefonoTrim, pacienteNombreTrim, clinic.id);
-        if (ambiguous) {
-          res.status(400).json({
-            error: `Hay más de una persona registrada como "${pacienteNombreTrim}" en este número. Llama a la clínica para agendarle.`,
-          });
+
+      let finalPatientId: string;
+      if (patientIdTrim) {
+        // No basta con que el id exista en la clínica: tiene que ser parte del
+        // grupo de ESTE teléfono, o cualquiera podría agendar sobre el id de
+        // otro paciente con solo conocerlo (los ids no viajan en la URL, pero
+        // sí llegarían acá tal cual el cliente los mande).
+        const patient = await getPatient(patientIdTrim, clinic.id).catch(() => null);
+        if (!patient || patient.telefono !== telefonoTrim) {
+          res.status(400).json({ error: "El paciente elegido no corresponde a ese número." });
           return;
         }
-        patientId = patient.id;
+        if (nombreTrim && !patient.nombre) {
+          await updatePatientName(patient.id, nombreTrim);
+        }
+        finalPatientId = patient.id;
+      } else if (nombreTrim) {
+        const titular = await findOrCreatePatient(telefonoTrim, clinic.id);
+        // Solo completa el nombre del titular si aún no tiene uno: no se debe
+        // sobrescribir el nombre ya guardado por una reserva anterior.
+        if (!titular.nombre) await updatePatientName(titular.id, nombreTrim);
+        finalPatientId = titular.id;
+      } else if (pacienteNombreTrim) {
+        const created = await createDependentPatient(telefonoTrim, pacienteNombreTrim, clinic.id);
+        finalPatientId = created.id;
+      } else {
+        res.status(400).json({ error: "Falta indicar el paciente." });
+        return;
       }
 
       const appointment = await bookAppointment({
         clinicId: clinic.id,
         doctorId,
-        patientId,
+        patientId: finalPatientId,
         serviceId,
         inicio: inicioDate,
         origen: "link_publico",
@@ -281,7 +301,7 @@ publicBookingRouter.post(
         fin: appointment.fin.toISOString(),
       });
     } catch (error) {
-      if (error instanceof SlotUnavailableError) {
+      if (error instanceof SlotUnavailableError || error instanceof PatientScheduleConflictError) {
         res.status(409).json({ error: error.message });
         return;
       }
