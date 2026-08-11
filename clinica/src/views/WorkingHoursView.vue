@@ -8,6 +8,14 @@ import { useCatalogStore } from "@/stores/catalog";
 import { useClinicaStore } from "@/stores/clinica";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
 import { useConfirm } from "@/composables/useConfirm";
+import {
+  buildAffectedWarning,
+  cancelAppointments,
+  findAppointmentsInRemoved,
+  MOTIVO_CAMBIO_HORARIO,
+} from "@/lib/cancelCascade";
+import { overlappingBlock, removedIntervalsByDay } from "@/lib/workingHours";
+import type { ScheduleChangeResult } from "@/lib/workingHours";
 import Button from "@/components/ui/Button.vue";
 import ActionIcon from "@/components/ui/ActionIcon.vue";
 import AddWorkingHoursModal from "@/components/AddWorkingHoursModal.vue";
@@ -31,6 +39,9 @@ const doctorId = ref("");
 const workingHours = ref<WorkingHoursRow[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
+const cancelNotice = ref<string | null>(null);
+/** Se muestra en tono neutro: hubo revisión y no había ninguna cita que cancelar. */
+const okNotice = ref<string | null>(null);
 
 const showModal = ref(false);
 const modalMode = ref<"create" | "edit">("create");
@@ -50,6 +61,40 @@ const groupedByDay = computed(() => {
 function toHm(t: string): string {
   return t.slice(0, 5);
 }
+
+/**
+ * Bloques que se pisan entre sí. Hoy guardar uno así es imposible, pero los que
+ * se cargaron antes de esa regla siguen en la base y, mientras estén, cualquier
+ * edición de los implicados se rechaza. Se señalan para que recepción borre el
+ * redundante (borrar nunca se bloquea).
+ */
+const overlappingIds = computed(() => {
+  const ids = new Set<string>();
+  for (const [, rows] of groupedByDay.value) {
+    for (const row of rows) {
+      const choque = overlappingBlock(
+        row,
+        rows.filter((r) => r.id !== row.id),
+      );
+      if (choque) {
+        ids.add(row.id);
+        ids.add(choque.id);
+      }
+    }
+  }
+  return ids;
+});
+
+const overlapWarnings = computed(() => {
+  const out: string[] = [];
+  for (const dia of DIAS) {
+    const rows = (groupedByDay.value.get(dia.value) ?? []).filter((r) => overlappingIds.value.has(r.id));
+    if (rows.length > 0) {
+      out.push(`${dia.label}: ${rows.map((r) => `${toHm(r.hora_inicio)}–${toHm(r.hora_fin)}`).join(", ")}`);
+    }
+  }
+  return out;
+});
 
 async function load(): Promise<void> {
   if (!doctorId.value) {
@@ -89,6 +134,8 @@ function openCreate(dia?: IsoWeekday): void {
   modalMode.value = "create";
   editingRow.value = undefined;
   modalInitialDia.value = dia;
+  cancelNotice.value = null;
+  okNotice.value = null;
   showModal.value = true;
 }
 
@@ -96,23 +143,64 @@ function openEdit(row: WorkingHoursRow): void {
   modalMode.value = "edit";
   editingRow.value = row;
   modalInitialDia.value = undefined;
+  cancelNotice.value = null;
+  okNotice.value = null;
   showModal.value = true;
 }
 
-async function handleSaved(): Promise<void> {
+/**
+ * Un cambio que quita horario y no afecta a nadie se decía en silencio, y el
+ * silencio no se distingue de que la revisión no haya corrido. Por eso el caso
+ * "revisado, sin citas" tiene su propio aviso.
+ */
+function showResult(resultado: ScheduleChangeResult): void {
+  cancelNotice.value = null;
+  okNotice.value = null;
+  if (resultado.canceladas > 0) {
+    const cuantas = `${resultado.canceladas} ${resultado.canceladas === 1 ? "cita" : "citas"}`;
+    cancelNotice.value = `Se cancelaron ${cuantas} que quedaban fuera del horario. Avise a los pacientes desde la pantalla Mensajes.`;
+  } else if (resultado.quitoHorario) {
+    okNotice.value = "El cambio quitó horario, pero no dejó ninguna cita fuera.";
+  }
+}
+
+async function handleSaved(resultado: ScheduleChangeResult): Promise<void> {
   showModal.value = false;
+  showResult(resultado);
   await load();
 }
 
 async function removeBlock(row: WorkingHoursRow): Promise<void> {
-  const ok = await confirm({
-    title: "Eliminar este bloque de horario",
-    message: "Se eliminará este bloque del horario laboral. Esta acción no se puede deshacer.",
-  });
-  if (!ok) return;
   error.value = null;
+  cancelNotice.value = null;
+  okNotice.value = null;
   try {
+    // Qué citas se quedan sin horario si desaparece este bloque. No es "todas las
+    // de ese tramo": otro bloque del mismo día puede seguir cubriendo parte.
+    const restantes = workingHours.value.filter((r) => r.id !== row.id);
+    const removed = removedIntervalsByDay(workingHours.value, restantes);
+    const afectadas = await findAppointmentsInRemoved(doctorId.value, row.clinic, removed);
+
+    const base = "Se eliminará este bloque del horario laboral. Esta acción no se puede deshacer.";
+    const ok =
+      afectadas.length > 0
+        ? await confirm({
+            title: "Hay citas en ese bloque",
+            message: await buildAffectedWarning(
+              afectadas,
+              afectadas.length === 1
+                ? "Hay 1 cita agendada en ese bloque:"
+                : `Hay ${afectadas.length} citas agendadas en ese bloque:`,
+            ),
+            confirmLabel: "Eliminar y cancelar",
+          })
+        : await confirm({ title: "Eliminar este bloque de horario", message: base });
+    if (!ok) return;
+
+    // Primero el borrado y después las cancelaciones, igual que al guardar.
     await directus.request(deleteItem("working_hours", row.id));
+    await cancelAppointments(afectadas, MOTIVO_CAMBIO_HORARIO);
+    showResult({ canceladas: afectadas.length, quitoHorario: removed.size > 0 });
     await load();
   } catch (e) {
     error.value = friendlyErrorMessage(e, "No se pudo eliminar el horario.");
@@ -139,6 +227,41 @@ async function removeBlock(row: WorkingHoursRow): Promise<void> {
       </select>
     </div>
 
+    <div
+      v-if="cancelNotice"
+      class="mb-4 flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+    >
+      <span>{{ cancelNotice }}</span>
+      <RouterLink
+        v-if="auth.isReceptionist"
+        to="/mensajes"
+        class="flex-none font-medium underline underline-offset-2"
+      >
+        Ir a Mensajes
+      </RouterLink>
+    </div>
+
+    <div
+      v-if="okNotice"
+      class="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600"
+    >
+      {{ okNotice }}
+    </div>
+
+    <div
+      v-if="overlapWarnings.length > 0"
+      class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+    >
+      <p class="font-medium">Hay bloques superpuestos en este horario:</p>
+      <ul class="mt-1 list-inside list-disc">
+        <li v-for="linea in overlapWarnings" :key="linea">{{ linea }}</li>
+      </ul>
+      <p class="mt-2">
+        Se cargaron antes de que el sistema impidiera las superposiciones. Mientras estén así no se pueden editar:
+        elimine el bloque que sobra (al eliminarlo se avisa si hay citas afectadas).
+      </p>
+    </div>
+
     <div v-if="error" class="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
       {{ error }}
     </div>
@@ -159,7 +282,13 @@ async function removeBlock(row: WorkingHoursRow): Promise<void> {
             <div
               v-for="row in groupedByDay.get(dia.value)"
               :key="row.id"
-              class="flex items-center justify-between gap-1 rounded-lg bg-brand-50 px-2 py-1.5 text-xs font-medium text-brand-800"
+              class="flex items-center justify-between gap-1 rounded-lg px-2 py-1.5 text-xs font-medium"
+              :class="
+                overlappingIds.has(row.id)
+                  ? 'border border-amber-300 bg-amber-50 text-amber-800'
+                  : 'bg-brand-50 text-brand-800'
+              "
+              :title="overlappingIds.has(row.id) ? 'Este bloque se superpone con otro del mismo día' : undefined"
             >
               <span>{{ toHm(row.hora_inicio) }}–{{ toHm(row.hora_fin) }}</span>
               <div class="flex flex-none items-center gap-0.5">
@@ -202,6 +331,7 @@ async function removeBlock(row: WorkingHoursRow): Promise<void> {
       :mode="modalMode"
       :row="editingRow"
       :initial-dia="modalInitialDia"
+      :existing-rows="workingHours"
       @close="showModal = false"
       @saved="handleSaved"
     />

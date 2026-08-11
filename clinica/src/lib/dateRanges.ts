@@ -86,6 +86,12 @@ export function toYmd(dt: DateTime): string {
   return dt.toFormat("yyyy-LL-dd");
 }
 
+/** El inverso de `toYmd` para mostrar en pantalla: `yyyy-LL-dd` como `dd/mm/yyyy`. */
+export function formatYmd(ymd: string): string {
+  const dt = DateTime.fromFormat(ymd, "yyyy-LL-dd", { zone: CLINIC_TIMEZONE });
+  return dt.isValid ? dt.toFormat("dd/LL/yyyy") : ymd;
+}
+
 export function formatDay(date: Date): string {
   return DateTime.fromJSDate(date, { zone: CLINIC_TIMEZONE }).setLocale("es").toFormat("cccc d 'de' LLLL");
 }

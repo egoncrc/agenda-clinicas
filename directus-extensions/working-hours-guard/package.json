@@ -1,0 +1,29 @@
+{
+  "name": "directus-extension-working-hours-guard",
+  "description": "Impide horarios laborales superpuestos de un mismo médico y cancela las citas que quedan fuera al recortar o borrar un bloque",
+  "icon": "schedule",
+  "version": "1.0.0",
+  "keywords": [
+    "directus",
+    "directus-extension",
+    "directus-custom-hook"
+  ],
+  "type": "module",
+  "directus:extension": {
+    "type": "hook",
+    "path": "dist/index.js",
+    "source": "src/index.ts",
+    "host": "^10.10.0 || ^11.0.0"
+  },
+  "scripts": {
+    "build": "directus-extension build",
+    "dev": "directus-extension build -w"
+  },
+  "dependencies": {
+    "@directus/errors": "^2.4.0"
+  },
+  "devDependencies": {
+    "@directus/extensions-sdk": "^13.1.1",
+    "typescript": "^5.9.0"
+  }
+}
