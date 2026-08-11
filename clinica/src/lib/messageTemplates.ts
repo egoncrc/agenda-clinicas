@@ -89,16 +89,20 @@ export interface CancellationMessageInput {
 }
 
 /**
- * Aviso de que la cita se canceló porque el médico registró una ausencia sobre
- * ese horario. No se detalla el motivo (es información del profesional, y
- * "vacaciones" suena peor que "imprevisto" a quien pierde su cita) y se cierra
- * abriendo el reagendado, que es lo que la recepción necesita que pase después.
+ * Aviso de que la cita se canceló porque el médico dejó de atender ese horario:
+ * una ausencia registrada sobre esa fecha o un cambio en su horario laboral. La
+ * fórmula cubre las dos causas a propósito — al paciente le da igual cuál fue, y
+ * el motivo exacto queda en `motivo_cancelacion` para el reporte.
+ *
+ * No se detalla el motivo (es información del profesional, y "vacaciones" suena
+ * peor que "imprevisto" a quien pierde su cita) y se cierra abriendo el
+ * reagendado, que es lo que la recepción necesita que pase después.
  */
 export function buildCancellationMessage(i: CancellationMessageInput): string {
   return [
     saludo(i.pacienteNombre, i.clinicaNombre),
     "",
-    `Lamentamos informarle que debemos cancelar su cita de ${i.servicioNombre} con ${i.doctorNombre} del ${i.fechaTexto} a las ${i.horaTexto}, por una suspensión imprevista del profesional.`,
+    `Lamentamos informarle que debemos cancelar su cita de ${i.servicioNombre} con ${i.doctorNombre} del ${i.fechaTexto} a las ${i.horaTexto}, por un cambio imprevisto en la agenda del profesional.`,
     "",
     "Le ofrecemos disculpas por el inconveniente. Con gusto le reagendamos: cuéntenos qué día y a qué hora le queda mejor y se lo apartamos.",
     "",

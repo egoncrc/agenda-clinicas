@@ -7,7 +7,7 @@ import type { AppointmentRow, AppointmentStatus, PatientRow, TimeOffRow, Working
 import { useAuthStore } from "@/stores/auth";
 import { useCatalogStore } from "@/stores/catalog";
 import { useClinicaStore } from "@/stores/clinica";
-import { CLINIC_TIMEZONE, formatDay, formatTime } from "@/lib/dateRanges";
+import { CLINIC_TIMEZONE, formatDay, formatTime, formatYmd } from "@/lib/dateRanges";
 import { buildConfirmationMessage, waMeLink } from "@/lib/messageTemplates";
 import { dateRangeFilter } from "@/lib/queryHelpers";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
@@ -51,7 +51,12 @@ const createInitialDateTime = ref<Date | undefined>(undefined);
 const dayWorkingHours = ref<WorkingHoursRow[]>([]);
 const dayTimeOff = ref<TimeOffRow[]>([]);
 const dayActiveAppointments = ref<AppointmentRow[]>([]);
-/** Servicio elegido solo para calcular "Horarios disponibles" (duración/buffer reales, igual que el modal). Sin elegir uno, se asume un hueco genérico de 30' sin buffer. */
+/**
+ * Servicio con el que se calculan los "Horarios disponibles" (duración/buffer
+ * reales) y con el que se agenda al tocar un hueco: el modal ya no lo vuelve a
+ * preguntar. Siempre hay uno elegido, salvo que la especialidad no tenga
+ * ninguno configurado; ahí se cae a un hueco genérico de 30' sin buffer.
+ */
 const slotsServiceId = ref("");
 /** Especialidad elegida para la tarjeta de horarios: acota qué médicos se listan y qué servicios ofrece el desplegable de al lado. */
 const slotsSpecialtyId = ref("");
@@ -252,6 +257,7 @@ onMounted(async () => {
   // `load()` por el watcher y no conviene depender del orden. La especialidad
   // solo alimenta computeds, así que no necesita recargar nada.
   if (!slotsSpecialtyId.value) slotsSpecialtyId.value = slotsSpecialties.value[0]?.id ?? "";
+  if (!slotsServiceId.value) slotsServiceId.value = slotsServices.value[0]?.id ?? "";
 
   // Un médico no ve la opción "todos": se preselecciona a sí mismo (único
   // que `catalog.doctors` le devuelve). Recepción sí puede dejarlo en blanco.
@@ -275,9 +281,9 @@ watch([dateFilter, doctorFilter, estadoFilter], () => {
   load();
 });
 
-// El servicio elegido pertenece a la especialidad anterior: vuelve a la duración genérica.
+// El servicio elegido pertenece a la especialidad anterior: pasa al primero de la nueva.
 watch(slotsSpecialtyId, () => {
-  slotsServiceId.value = "";
+  slotsServiceId.value = slotsServices.value[0]?.id ?? "";
 });
 
 /** Abre el modal de nueva cita precargado desde un hueco libre de la sección de disponibilidad (mismo servicio, si se eligió uno, para que la hora siga siendo válida). */
@@ -437,7 +443,7 @@ async function quickCancel(appointment: AppointmentRow): Promise<void> {
 
     <Card v-if="!loading" class="mt-6">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 class="font-display text-sm font-bold text-brand-800">Horarios disponibles ({{ dateFilter }})</h2>
+        <h2 class="font-display text-sm font-bold text-brand-800">Horarios disponibles ({{ formatYmd(dateFilter) }})</h2>
         <div class="flex flex-wrap items-center gap-2">
           <label class="text-xs font-medium text-slate-600">Especialidad</label>
           <select
@@ -451,7 +457,7 @@ async function quickCancel(appointment: AppointmentRow): Promise<void> {
             v-model="slotsServiceId"
             class="rounded-lg border border-slate-300 px-2 py-1 text-xs transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
           >
-            <option value="">Duración genérica (30 min)</option>
+            <option v-if="slotsServices.length === 0" value="">Duración genérica (30 min)</option>
             <option v-for="s in slotsServices" :key="s.id" :value="s.id">
               {{ s.nombre }} ({{ s.duracion_min }} min)
             </option>
@@ -459,7 +465,7 @@ async function quickCancel(appointment: AppointmentRow): Promise<void> {
         </div>
       </div>
       <p class="mb-3 text-xs text-slate-500">
-        Elige el servicio real para que las horas mostradas coincidan exactamente con las que ofrece el modal de "Nueva cita".
+        Las horas se calculan con la duración real del servicio elegido, y ese es el servicio con el que se agenda al tocar un hueco.
       </p>
       <EmptyState v-if="slotsDoctors.length === 0" title="No hay médicos activos en esta especialidad" />
       <div v-else class="space-y-4">

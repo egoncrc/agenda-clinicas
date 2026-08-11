@@ -8,6 +8,7 @@ import { useAuthStore } from "@/stores/auth";
 import { useCatalogStore } from "@/stores/catalog";
 import { useClinicaStore } from "@/stores/clinica";
 import { CLINIC_TIMEZONE, formatDay, formatTime, toIsoOrThrow } from "@/lib/dateRanges";
+import { looksLikePhone } from "@/lib/phone";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
 import { computeAvailableStartTimes, computeUnavailableDates } from "@/lib/schedule";
 import { overlapsAnyAppointment } from "@/lib/patientOverlap";
@@ -48,6 +49,8 @@ const selectedPatient = ref<PatientRow | null>(null);
 const newPatientName = ref("");
 const newPatientPhone = ref("");
 const searching = ref(false);
+/** Distingue "todavía no se buscó" de "se buscó y no hay nadie" (ver `showNewPatientFields`). */
+const searched = ref(false);
 const existingPatientLabel = ref<string | null>(null);
 
 // --- Cita ---
@@ -377,14 +380,36 @@ async function searchPatient(): Promise<void> {
       pickPatient(results[0]);
     } else {
       searchResults.value = results;
-      // Precarga el nombre con lo buscado, listo para crear un paciente nuevo.
+      // Precarga lo buscado en el campo que le corresponde, listo para crear un
+      // paciente nuevo: quien escribió un número no debería tener que reescribirlo
+      // en Teléfono, ni acabar con el número puesto de nombre.
       if (results.length === 0) {
-        newPatientName.value = query;
+        if (looksLikePhone(query)) {
+          newPatientPhone.value = query;
+          newPatientName.value = "";
+        } else {
+          newPatientName.value = query;
+          newPatientPhone.value = "";
+        }
       }
     }
   } finally {
     searching.value = false;
+    searched.value = true;
   }
+}
+
+/**
+ * Vuelve al estado "aún no se ha buscado" al reescribir la búsqueda: sin esto,
+ * los resultados de la búsqueda anterior siguen en pantalla y los campos de alta
+ * aparecen antes de haber buscado nada.
+ */
+function resetPatientSearch(): void {
+  selectedPatient.value = null;
+  searchResults.value = [];
+  newPatientName.value = "";
+  newPatientPhone.value = "";
+  searched.value = false;
 }
 
 function pickPatient(p: PatientRow): void {
@@ -434,6 +459,11 @@ const serviceLocked = props.mode === "create" && Boolean(props.initialServiceId)
 
 /** Un paciente ya existente no se renombra desde acá, salvo que no tuviera nombre (ver `ensurePatientId`). */
 const patientNameEditable = computed(() => !selectedPatient.value?.nombre?.trim());
+
+/** Alta de un paciente nuevo: solo después de buscar y no encontrar a nadie. */
+const showNewPatientFields = computed(
+  () => searched.value && !searching.value && !selectedPatient.value && searchResults.value.length === 0,
+);
 
 /**
  * Por si la fecha elegida deja de aplicar después de elegirse: cambió el
@@ -603,7 +633,7 @@ async function handleSubmit(): Promise<void> {
               type="text"
               placeholder="Nombre o +506..."
               class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-              @input="selectedPatient = null; newPatientName = ''; newPatientPhone = ''"
+              @input="resetPatientSearch"
             />
             <Button variant="secondary" @click="searchPatient">Buscar</Button>
           </div>
@@ -631,7 +661,7 @@ async function handleSubmit(): Promise<void> {
               ¿Es para otra persona?
             </button>
           </div>
-          <p v-else-if="patientQuery && searchResults.length === 0 && !searching" class="mt-2 text-sm text-slate-500">
+          <p v-else-if="showNewPatientFields" class="mt-2 text-sm text-slate-500">
             No se encontró; se creará un paciente nuevo.
           </p>
 
@@ -647,7 +677,9 @@ async function handleSubmit(): Promise<void> {
             />
           </div>
 
-          <div v-else-if="patientQuery && searchResults.length === 0 && !searching" class="mt-2 space-y-2">
+          <!-- Alta de un paciente nuevo: nombre y teléfono, con lo buscado ya
+               precargado en el campo que corresponda (ver `searchPatient`). -->
+          <div v-if="showNewPatientFields" class="mt-2 space-y-2">
             <div>
               <label class="mb-1 block text-sm font-medium text-slate-700">Nombre del paciente</label>
               <input

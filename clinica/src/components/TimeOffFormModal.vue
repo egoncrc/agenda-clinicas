@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { createItem, readItems, updateItem } from "@directus/sdk";
+import { createItem, updateItem } from "@directus/sdk";
 import { DateTime } from "luxon";
 import { directus } from "@/lib/directus";
-import type { AppointmentStatus, TimeOffRow } from "@/lib/directus";
-import { CLINIC_TIMEZONE, now, toIsoOrThrow } from "@/lib/dateRanges";
+import type { TimeOffRow } from "@/lib/directus";
+import { CLINIC_TIMEZONE, toIsoOrThrow } from "@/lib/dateRanges";
 import { dateCompareFilter } from "@/lib/queryHelpers";
+import {
+  buildAffectedWarning,
+  cancelAppointments,
+  fetchFutureActiveAppointments,
+  MOTIVO_AUSENCIA,
+} from "@/lib/cancelCascade";
+import type { AffectedAppointment } from "@/lib/cancelCascade";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
 import { useConfirm } from "@/composables/useConfirm";
 import { useClinicaStore } from "@/stores/clinica";
@@ -43,23 +50,11 @@ const motivo = ref(props.row?.motivo ?? "");
 const saving = ref(false);
 const error = ref<string | null>(null);
 
-/** Estados que ocupan la agenda y que hay que liberar. `completada` no: esa cita ya se atendió. */
-const CANCELABLE_STATUSES: AppointmentStatus[] = ["pendiente", "confirmada"];
-
-/** Cuántas citas se detallan en el diálogo antes de resumir el resto como "y N más". */
-const PREVIEW_LIMIT = 5;
-
-interface AffectedAppointment {
-  id: string;
-  inicio: string;
-  patient: string;
-}
-
 /**
  * Citas activas que quedarían dentro de la ausencia. Mismo criterio de solape que
- * el hook `time-off-cascade-hook` de Directus (la cita empieza antes de que acabe
- * la ausencia y termina después de que empiece) y solo futuras: una ausencia
- * registrada a posteriori no debe reescribir citas que ya ocurrieron.
+ * el hook `time-off-cascade-hook` de Directus: la cita empieza antes de que acabe
+ * la ausencia y termina después de que empiece. El resto de condiciones (médico,
+ * clínica, estados cancelables y solo futuras) las pone `fetchFutureActiveAppointments`.
  */
 async function findAffectedAppointments(
   doctor: string,
@@ -67,53 +62,10 @@ async function findAffectedAppointments(
   inicioIso: string,
   finIso: string,
 ): Promise<AffectedAppointment[]> {
-  return directus.request(
-    readItems("appointments", {
-      filter: {
-        _and: [
-          { doctor: { _eq: doctor } },
-          // Solo las de esta clínica: la ausencia bloquea esta sede, y el médico
-          // sigue atendiendo en las otras donde trabaje.
-          { clinic: { _eq: clinic } },
-          { estado: { _in: CANCELABLE_STATUSES } },
-          { inicio: dateCompareFilter("_lt", finIso) },
-          { fin: dateCompareFilter("_gt", inicioIso) },
-          { inicio: dateCompareFilter("_gt", toIsoOrThrow(now())) },
-        ],
-      },
-      fields: ["id", "inicio", "patient"],
-      sort: ["inicio"],
-      limit: -1,
-    }),
-  );
-}
-
-/** Texto del diálogo: qué se va a cancelar y qué tiene que hacer la recepción después. */
-async function buildWarning(afectadas: AffectedAppointment[]): Promise<string> {
-  const nombres = await directus.request(
-    readItems("patients", {
-      filter: { id: { _in: [...new Set(afectadas.map((a) => a.patient))] } },
-      fields: ["id", "nombre"],
-      limit: -1,
-    }),
-  );
-  const nombrePorId = Object.fromEntries(nombres.map((p) => [p.id, p.nombre?.trim() || "(sin nombre)"]));
-
-  const lineas = afectadas.slice(0, PREVIEW_LIMIT).map((a) => {
-    const dt = DateTime.fromISO(a.inicio, { zone: CLINIC_TIMEZONE }).setLocale("es");
-    return `• ${dt.toFormat("d LLL, HH:mm")} — ${nombrePorId[a.patient] ?? "(sin nombre)"}`;
-  });
-  const resto = afectadas.length - lineas.length;
-  if (resto > 0) lineas.push(`• y ${resto} más`);
-
-  const cuantas = afectadas.length === 1 ? "Hay 1 cita agendada" : `Hay ${afectadas.length} citas agendadas`;
-  return [
-    `${cuantas} dentro de ese periodo:`,
-    "",
-    ...lineas,
-    "",
-    "Si continúa, esas citas quedarán canceladas. Después habrá que avisar a los pacientes desde la pantalla Mensajes.",
-  ].join("\n");
+  return fetchFutureActiveAppointments(doctor, clinic, [
+    { inicio: dateCompareFilter("_lt", finIso) },
+    { fin: dateCompareFilter("_gt", inicioIso) },
+  ]);
 }
 
 async function handleSubmit(): Promise<void> {
@@ -143,9 +95,10 @@ async function handleSubmit(): Promise<void> {
 
     const afectadas = await findAffectedAppointments(doctor, clinic, inicioIso, finIso);
     if (afectadas.length > 0) {
+      const cuantas = afectadas.length === 1 ? "Hay 1 cita agendada" : `Hay ${afectadas.length} citas agendadas`;
       const ok = await confirm({
         title: "Hay citas en ese periodo",
-        message: await buildWarning(afectadas),
+        message: await buildAffectedWarning(afectadas, `${cuantas} dentro de ese periodo:`),
         confirmLabel: "Cancelar esas citas",
       });
       // Se aborta sin guardar: la ausencia y la cancelación de sus citas son una
@@ -162,24 +115,9 @@ async function handleSubmit(): Promise<void> {
       await directus.request(updateItem("time_off", props.row.id, payload));
     }
 
-    // Redundante con el hook `time-off-cascade-hook` de Directus, e idempotente a
-    // propósito: el panel no depende de que esa extensión esté desplegada, y el
-    // hook cubre lo que no pasa por el panel (admin de Directus, API).
-    // Misma trazabilidad que escribe el hook, para que el reporte de Cancelaciones
-    // muestre lo mismo corra quien corra primero (y para que el panel siga siendo
-    // autosuficiente si la extensión no está desplegada).
-    const canceladoEn = new Date().toISOString();
-    for (const a of afectadas) {
-      await directus.request(
-        updateItem("appointments", a.id, {
-          estado: "cancelada",
-          cancelada_por_ausencia: true,
-          cancelado_en: canceladoEn,
-          cancelado_por: "clinica",
-          motivo_cancelacion: "Ausencia del médico",
-        }),
-      );
-    }
+    // Misma trazabilidad que escribe el hook `time-off-cascade-hook`, redundante e
+    // idempotente a propósito (ver el docblock de cancelCascade.ts).
+    await cancelAppointments(afectadas, MOTIVO_AUSENCIA);
 
     emit("saved", afectadas.length);
   } catch (e) {
