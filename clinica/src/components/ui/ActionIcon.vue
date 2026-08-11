@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{ name: "edit" | "trash" | "whatsapp" }>();
+defineProps<{ name: "edit" | "trash" | "whatsapp" | "calendar" }>();
 </script>
 
 <template>
@@ -13,6 +13,11 @@ defineProps<{ name: "edit" | "trash" | "whatsapp" }>();
       <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
       <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" />
       <path d="M10 11v6M14 11v6" />
+    </template>
+    <template v-else-if="name === 'calendar'">
+      <rect x="3" y="5" width="18" height="15" rx="2" />
+      <path d="M3 10h18" />
+      <path d="M8 3v4M16 3v4" />
     </template>
     <template v-else-if="name === 'whatsapp'">
       <path d="M3.5 20.5l1.25-3.65a8 8 0 1 1 3 2.95l-4.25.7z" />

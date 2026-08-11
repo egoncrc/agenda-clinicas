@@ -1,13 +1,26 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
-import { readItems, updateItem } from "@directus/sdk";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { aggregate, readItems, updateItem } from "@directus/sdk";
 import { directus } from "@/lib/directus";
 import type { PatientRow } from "@/lib/directus";
 import { useAuthStore } from "@/stores/auth";
 import { useClinicaStore } from "@/stores/clinica";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
+import { clampPage, pageRangeLabel, totalPages as computeTotalPages } from "@/lib/pagination";
+import {
+  buildPatientFilter,
+  DEFAULT_SORT,
+  EMPTY_COLUMN_FILTERS,
+  nextSort,
+  patientSort,
+  type EstadoFilter,
+  type PatientColumnFilters,
+  type PatientSort,
+  type PatientSortKey,
+} from "@/lib/patientQuery";
 import { useConfirm } from "@/composables/useConfirm";
 import PatientFormModal from "@/components/PatientFormModal.vue";
+import PatientAppointmentsModal from "@/components/PatientAppointmentsModal.vue";
 import Button from "@/components/ui/Button.vue";
 import Badge from "@/components/ui/Badge.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
@@ -17,64 +30,130 @@ const auth = useAuthStore();
 const clinica = useClinicaStore();
 const confirm = useConfirm();
 
-/** Tope de filas por consulta: la lista no pagina, se refina con el buscador. */
-const PAGE_LIMIT = 200;
-
 const search = ref("");
-const estadoFilter = ref<"activos" | "inactivos" | "todos">("activos");
+const estadoFilter = ref<EstadoFilter>("activos");
+const columnFilters = reactive<PatientColumnFilters>({ ...EMPTY_COLUMN_FILTERS });
+const sort = ref<PatientSort>({ ...DEFAULT_SORT });
+
+/** Columnas de texto: las dos filas del encabezado y su filtro salen de acá. */
+const TEXT_COLUMNS: { key: keyof PatientColumnFilters; label: string }[] = [
+  { key: "nombre", label: "Nombre" },
+  { key: "telefono", label: "Teléfono" },
+  { key: "identificacion", label: "Identificación" },
+  { key: "correo", label: "Correo" },
+  { key: "ubicacion", label: "Ubicación" },
+];
+
+const FILTER_INPUT =
+  "w-full rounded-md border border-slate-300 px-2 py-1 text-xs font-normal normal-case text-slate-700 transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30";
+
+const pageSize = ref<10 | 20 | 30>(10);
+const currentPage = ref(1);
+const totalCount = ref(0);
+const totalPagesComputed = computed(() => computeTotalPages(totalCount.value, pageSize.value));
 
 const patients = ref<PatientRow[]>([]);
 const loading = ref(true);
+/** Recarga por filtro/orden: la tabla sigue montada (si no, se pierde el foco del input). */
+const refreshing = ref(false);
 const error = ref<string | null>(null);
 
 const showModal = ref(false);
 const modalMode = ref<"create" | "edit">("create");
 const editingPatient = ref<PatientRow | undefined>(undefined);
+const citasPatient = ref<PatientRow | null>(null);
 
-let loadInFlight = false;
+/**
+ * Token de secuencia en vez de un booleano "hay una carga en curso": ese guard
+ * descartaba la petición MÁS NUEVA (tocar un encabezado mientras viaja un filtro
+ * dejaba la flecha mintiendo). Acá se descartan las respuestas viejas, lo que de
+ * paso evita que dos cargas resuelvan en desorden.
+ */
+let loadSeq = 0;
 
 async function load(opts: { silent?: boolean } = {}): Promise<void> {
-  if (loadInFlight) return;
-  loadInFlight = true;
-  if (!opts.silent) loading.value = true;
+  const seq = ++loadSeq;
+  if (opts.silent) refreshing.value = true;
+  else loading.value = true;
   error.value = null;
   try {
-    const filter: Record<string, unknown> = { clinic: { _eq: clinica.activeClinicId ?? undefined } };
-    // `_neq: false` en vez de `_eq: true`: una fila creada fuera del panel puede
-    // tener `activo` en NULL y no por eso está dada de baja.
-    if (estadoFilter.value === "activos") filter.activo = { _neq: false };
-    else if (estadoFilter.value === "inactivos") filter.activo = { _eq: false };
+    // El MISMO filtro va a las filas y al conteo: si divergen, el paginador
+    // calcula páginas sobre otra población que la que se muestra.
+    const filter = buildPatientFilter({
+      clinicId: clinica.activeClinicId ?? undefined,
+      estado: estadoFilter.value,
+      search: search.value,
+      columns: columnFilters,
+    });
 
-    const query = search.value.trim();
-    if (query) {
-      filter._or = [
-        { nombre: { _icontains: query } },
-        { telefono: { _contains: query } },
-        { identificacion: { _icontains: query } },
-        { correo: { _icontains: query } },
-      ];
+    const [rows, countResult] = await Promise.all([
+      directus.request(
+        readItems("patients", {
+          filter,
+          sort: patientSort(sort.value),
+          limit: pageSize.value,
+          page: currentPage.value,
+        }),
+      ),
+      directus.request(aggregate("patients", { aggregate: { count: "*" }, query: { filter } })),
+    ]);
+    if (seq !== loadSeq) return;
+    patients.value = rows;
+    totalCount.value = Number(countResult[0]?.count ?? 0);
+
+    // Se dio de baja/borró el último registro de la página: retroceder en vez
+    // de quedar mostrando una tabla vacía con páginas anteriores disponibles.
+    if (patients.value.length === 0 && currentPage.value > 1) {
+      currentPage.value = clampPage(currentPage.value - 1, totalPagesComputed.value);
+      await load(opts);
+      return;
     }
-
-    patients.value = await directus.request(
-      readItems("patients", { filter, sort: ["nombre"], limit: PAGE_LIMIT }),
-    );
   } catch (e) {
-    error.value = friendlyErrorMessage(e, "No se pudieron cargar los pacientes.");
+    if (seq === loadSeq) error.value = friendlyErrorMessage(e, "No se pudieron cargar los pacientes.");
   } finally {
-    if (!opts.silent) loading.value = false;
-    loadInFlight = false;
+    if (seq === loadSeq) {
+      loading.value = false;
+      refreshing.value = false;
+    }
   }
 }
 
-/** El buscador consulta a Directus, así que espera a que la recepcionista deje de escribir. */
+function goToPage(page: number): void {
+  const next = clampPage(page, totalPagesComputed.value);
+  if (next === currentPage.value) return;
+  currentPage.value = next;
+  void load({ silent: true });
+}
+
+/** Los filtros consultan a Directus, así que esperan a que la recepcionista deje de escribir. */
 const SEARCH_DEBOUNCE_MS = 300;
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
-watch(search, () => {
+/** Un solo timer para los seis campos de texto: todos terminan en la misma consulta. */
+function scheduleReload(): void {
   if (searchTimer) clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => void load(), SEARCH_DEBOUNCE_MS);
-});
-watch(estadoFilter, () => load());
+  searchTimer = setTimeout(() => {
+    currentPage.value = 1;
+    void load({ silent: true });
+  }, SEARCH_DEBOUNCE_MS);
+}
+
+/** Cambios que no son de teclado: recargan ya y cancelan el debounce pendiente (si no, dispararía una segunda consulta inútil). */
+function reloadNow(): void {
+  if (searchTimer) clearTimeout(searchTimer);
+  currentPage.value = 1;
+  void load({ silent: true });
+}
+
+watch(search, scheduleReload);
+watch(columnFilters, scheduleReload);
+watch(estadoFilter, reloadNow);
+watch(pageSize, reloadNow);
+
+function toggleSort(key: PatientSortKey): void {
+  sort.value = nextSort(sort.value, key);
+  reloadNow();
+}
 
 onMounted(() => load());
 onUnmounted(() => {
@@ -148,14 +227,6 @@ async function toggleActivo(p: PatientRow): Promise<void> {
         class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 sm:w-72"
         placeholder="Buscar por nombre, teléfono, identificación o correo"
       />
-      <select
-        v-model="estadoFilter"
-        class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 sm:w-auto"
-      >
-        <option value="activos">Activos</option>
-        <option value="inactivos">Dados de baja</option>
-        <option value="todos">Todos</option>
-      </select>
     </div>
 
     <div v-if="loading" class="flex items-center gap-2 py-10 text-sm text-slate-500">
@@ -167,21 +238,79 @@ async function toggleActivo(p: PatientRow): Promise<void> {
     </div>
 
     <div v-else class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <EmptyState v-if="patients.length === 0" title="No hay pacientes para este filtro" />
-      <div v-else class="overflow-x-auto">
-        <table class="w-full min-w-[820px] text-left text-sm">
-          <thead class="border-b border-slate-200 bg-slate-50">
+      <div class="overflow-x-auto transition-opacity" :class="refreshing ? 'opacity-60' : ''">
+        <table class="w-full min-w-[960px] text-left text-sm">
+          <thead class="bg-slate-50">
             <tr>
-              <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Nombre</th>
-              <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Teléfono</th>
-              <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Identificación</th>
-              <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Correo</th>
-              <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Ubicación</th>
-              <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Estado</th>
-              <th class="px-4 py-2.5"></th>
+              <th
+                v-for="col in TEXT_COLUMNS"
+                :key="col.key"
+                class="px-4 pt-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500"
+                :aria-sort="sort.key === col.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'"
+              >
+                <button
+                  type="button"
+                  class="flex items-center gap-1 uppercase transition hover:text-brand-700"
+                  :aria-label="`Ordenar por ${col.label}`"
+                  @click="toggleSort(col.key)"
+                >
+                  {{ col.label }}
+                  <!-- La flecha inactiva se deja renderizada (en gris claro) para que el ancho de columna no salte al ordenar. -->
+                  <span
+                    class="text-[10px] leading-none"
+                    :class="sort.key === col.key ? 'text-brand-600' : 'text-slate-300'"
+                  >
+                    {{ sort.key === col.key && sort.dir === "desc" ? "▼" : "▲" }}
+                  </span>
+                </button>
+              </th>
+              <th
+                class="px-4 pt-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500"
+                :aria-sort="sort.key === 'estado' ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'"
+              >
+                <button
+                  type="button"
+                  class="flex items-center gap-1 uppercase transition hover:text-brand-700"
+                  aria-label="Ordenar por Estado"
+                  @click="toggleSort('estado')"
+                >
+                  Estado
+                  <span
+                    class="text-[10px] leading-none"
+                    :class="sort.key === 'estado' ? 'text-brand-600' : 'text-slate-300'"
+                  >
+                    {{ sort.key === "estado" && sort.dir === "desc" ? "▼" : "▲" }}
+                  </span>
+                </button>
+              </th>
+              <th class="px-4 pt-2.5"></th>
+            </tr>
+            <tr class="border-b border-slate-200">
+              <th v-for="col in TEXT_COLUMNS" :key="col.key" class="px-4 pb-2.5 pt-1.5 align-top font-normal">
+                <input
+                  v-model="columnFilters[col.key]"
+                  :class="FILTER_INPUT"
+                  placeholder="Filtrar"
+                  :aria-label="`Filtrar por ${col.label}`"
+                />
+              </th>
+              <th class="px-4 pb-2.5 pt-1.5 align-top font-normal">
+                <select v-model="estadoFilter" :class="FILTER_INPUT" aria-label="Filtrar por estado">
+                  <option value="activos">Activos</option>
+                  <option value="inactivos">Dados de baja</option>
+                  <option value="todos">Todos</option>
+                </select>
+              </th>
+              <th class="px-4 pb-2.5 pt-1.5"></th>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
+            <!-- El vacío va DENTRO de la tabla: si la reemplazara, un filtro sin resultados escondería el input que hay que limpiar. -->
+            <tr v-if="patients.length === 0">
+              <td colspan="7">
+                <EmptyState title="No hay pacientes para este filtro" />
+              </td>
+            </tr>
             <tr v-for="p in patients" :key="p.id" class="transition hover:bg-slate-50">
               <td class="px-4 py-2.5 text-slate-700">
                 {{ p.nombre?.trim() || "(sin nombre)" }}
@@ -198,6 +327,15 @@ async function toggleActivo(p: PatientRow): Promise<void> {
               </td>
               <td class="px-4 py-2.5">
                 <div class="flex items-center justify-end gap-1">
+                  <button
+                    type="button"
+                    class="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-brand-700"
+                    title="Próximas citas"
+                    :aria-label="`Próximas citas de ${p.nombre?.trim() || p.telefono}`"
+                    @click="citasPatient = p"
+                  >
+                    <span class="h-4 w-4"><ActionIcon name="calendar" /></span>
+                  </button>
                   <button
                     type="button"
                     class="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-brand-700"
@@ -235,9 +373,39 @@ async function toggleActivo(p: PatientRow): Promise<void> {
       </div>
     </div>
 
-    <p v-if="!loading && !error && patients.length === PAGE_LIMIT" class="mt-3 text-xs text-slate-500">
-      Mostrando los primeros {{ PAGE_LIMIT }} pacientes — refiná la búsqueda para ver el resto.
-    </p>
+    <div
+      v-if="!loading && !error && totalCount > 0"
+      class="mt-3 flex flex-wrap items-center justify-between gap-3"
+    >
+      <div class="flex items-center gap-2 text-xs text-slate-500">
+        <span>{{ pageRangeLabel(currentPage, pageSize, totalCount) }}</span>
+        <label class="flex items-center gap-1.5">
+          Por página
+          <select
+            v-model.number="pageSize"
+            class="rounded-md border border-slate-300 px-2 py-1 text-xs transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+          >
+            <option :value="10">10</option>
+            <option :value="20">20</option>
+            <option :value="30">30</option>
+          </select>
+        </label>
+      </div>
+      <div class="flex items-center gap-2">
+        <Button variant="secondary" size="sm" :disabled="currentPage === 1" @click="goToPage(currentPage - 1)">
+          Anterior
+        </Button>
+        <span class="text-xs text-slate-500">Página {{ currentPage }} de {{ totalPagesComputed }}</span>
+        <Button
+          variant="secondary"
+          size="sm"
+          :disabled="currentPage === totalPagesComputed"
+          @click="goToPage(currentPage + 1)"
+        >
+          Siguiente
+        </Button>
+      </div>
+    </div>
 
     <PatientFormModal
       v-if="showModal"
@@ -245,6 +413,12 @@ async function toggleActivo(p: PatientRow): Promise<void> {
       :row="editingPatient"
       @close="showModal = false"
       @saved="handleSaved"
+    />
+
+    <PatientAppointmentsModal
+      v-if="citasPatient"
+      :patient="citasPatient"
+      @close="citasPatient = null"
     />
   </div>
 </template>
