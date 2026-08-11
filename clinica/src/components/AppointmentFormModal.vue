@@ -7,9 +7,10 @@ import type { AppointmentRow, AppointmentStatus, CancelledBy, PatientRow, TimeOf
 import { useAuthStore } from "@/stores/auth";
 import { useCatalogStore } from "@/stores/catalog";
 import { useClinicaStore } from "@/stores/clinica";
-import { CLINIC_TIMEZONE, toIsoOrThrow } from "@/lib/dateRanges";
+import { CLINIC_TIMEZONE, formatDay, formatTime, toIsoOrThrow } from "@/lib/dateRanges";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
 import { computeAvailableStartTimes, computeUnavailableDates } from "@/lib/schedule";
+import { overlapsAnyAppointment } from "@/lib/patientOverlap";
 import DatePicker from "@/components/DatePicker.vue";
 import Button from "@/components/ui/Button.vue";
 
@@ -61,6 +62,14 @@ const specialtyId = ref("");
 const serviceId = ref(editingAppointment?.service ?? props.initialServiceId ?? "");
 const doctorId = ref(editingAppointment?.doctor ?? props.initialDoctorId ?? "");
 
+/**
+ * Servicio/médico/fecha originales de la cita en edición, para saber si el
+ * usuario tocó alguno de los tres (ver `scheduleChanged` más abajo). `undefined`
+ * en creación, donde el concepto no aplica.
+ */
+const originalService = editingAppointment?.service;
+const originalDoctor = editingAppointment?.doctor;
+
 /** Servicios y médicos de la especialidad elegida (o todos si aún no se eligió). */
 const filteredServices = computed(() => catalog.servicesBySpecialty(specialtyId.value || undefined));
 const filteredDoctors = computed(() => catalog.doctorsBySpecialty(specialtyId.value || undefined));
@@ -80,6 +89,19 @@ watch(specialtyId, () => {
 });
 const date = ref(editingAppointment ? toDateInput(new Date(editingAppointment.inicio)) : "");
 const time = ref(editingAppointment ? toTimeInput(new Date(editingAppointment.inicio)) : "");
+const originalDate = date.value || undefined;
+
+/**
+ * En edición, si servicio, médico o fecha se apartan de lo que tenía la cita
+ * originalmente, la hora heredada deja de ser confiable (pudo dejar de caber
+ * o solaparse con otra cita al cambiar duración/agenda) — ver `timeOptions` y
+ * el watch de `availableTimes` más abajo.
+ */
+const scheduleChanged = computed(
+  () =>
+    props.mode === "edit" &&
+    (serviceId.value !== originalService || doctorId.value !== originalDoctor || date.value !== originalDate),
+);
 const estado = ref<AppointmentStatus>(editingAppointment?.estado ?? "pendiente");
 /** Solo se muestra (y se envía) cuando el estado pasa a `cancelada`. */
 const motivoCancelacion = ref<string>(editingAppointment?.motivo_cancelacion ?? "");
@@ -105,6 +127,55 @@ const doctorWorkingHours = ref<WorkingHoursRow[]>([]);
 const doctorTimeOff = ref<TimeOffRow[]>([]);
 const doctorAppointments = ref<AppointmentRow[]>([]);
 const loadingSlots = ref(false);
+
+/**
+ * Citas activas del PACIENTE en esta clínica, sin importar médico ni
+ * especialidad — un paciente no puede estar en dos consultas a la vez. En
+ * edición el paciente es fijo (`props.appointment.patient`); en creación se
+ * conoce solo si se eligió uno ya existente (uno recién creado no puede tener
+ * otras citas).
+ */
+const currentPatientId = computed<string | null>(() =>
+  props.mode === "edit" ? props.appointment?.patient ?? null : selectedPatient.value?.id ?? null,
+);
+const patientAppointments = ref<AppointmentRow[]>([]);
+
+watch(
+  currentPatientId,
+  async (patientId) => {
+    if (!patientId) {
+      patientAppointments.value = [];
+      return;
+    }
+    patientAppointments.value = await directus.request(
+      readItems("appointments", {
+        filter: {
+          patient: { _eq: patientId },
+          clinic: { _eq: clinica.activeClinicId ?? undefined },
+          estado: { _in: BLOCKING_STATUSES },
+        },
+        limit: -1,
+      }),
+    );
+  },
+  { immediate: true },
+);
+
+/** Citas del paciente, sin contar la propia cita en edición (no debe bloquearse a sí misma). */
+const patientAppointmentsForCheck = computed(() =>
+  patientAppointments.value.filter(
+    (a) => !(props.mode === "edit" && props.appointment && a.id === props.appointment.id),
+  ),
+);
+
+/** ¿El horario elegido se traslapa con otra cita activa del mismo paciente en esta clínica? */
+const patientConflict = computed(() => {
+  if (!date.value || !time.value || !durationMin.value) return false;
+  const inicio = DateTime.fromFormat(`${date.value} ${time.value}`, "yyyy-LL-dd HH:mm", { zone: CLINIC_TIMEZONE });
+  if (!inicio.isValid) return false;
+  const fin = inicio.plus({ minutes: durationMin.value });
+  return overlapsAnyAppointment({ inicio: inicio.toJSDate(), fin: fin.toJSDate() }, patientAppointmentsForCheck.value);
+});
 
 const disabledWeekdays = computed(() => {
   // Mientras se carga el horario del médico elegido, doctorWorkingHours
@@ -160,6 +231,17 @@ watch(
 );
 
 const bufferMin = computed(() => catalog.services.find((s) => s.id === serviceId.value)?.buffer_min ?? 0);
+/**
+ * Declarado antes de `availableTimes` (y no más abajo, junto a los otros
+ * computeds derivados) a propósito: el `watch(availableTimes, ...)` de más
+ * abajo evalúa `availableTimes` de una al registrarse (durante `setup()`,
+ * antes de que el resto del script termine de ejecutarse) y ese cálculo
+ * necesita `durationMin` ya inicializado — si se declarara después, sería
+ * un acceso a un `const` en su temporal dead zone.
+ */
+const durationMin = computed(
+  () => catalog.services.find((s) => s.id === serviceId.value)?.duracion_min ?? 0,
+);
 
 /** Citas activas del médico, sin contar la propia cita en edición (no debe bloquearse a sí misma). */
 const appointmentsForCheck = computed(() =>
@@ -202,12 +284,35 @@ const unavailableDates = computed<string[]>(() => {
   });
 });
 
-/** Incluye siempre la hora ya elegida (ej. al editar, o precargada desde "Horarios disponibles"), aunque ya no aparezca como libre — el backend valida de nuevo antes de guardar. */
+/**
+ * Incluye siempre la hora ya elegida (ej. al editar, o precargada desde
+ * "Horarios disponibles"), aunque ya no aparezca como libre — el backend valida
+ * de nuevo antes de guardar. Pero solo mientras `scheduleChanged` sea falso: en
+ * cuanto servicio/médico/fecha se apartan de lo original, esa hora heredada deja
+ * de ser confiable (ver el watch de `availableTimes` más abajo, que la limpia).
+ */
 const timeOptions = computed<string[]>(() => {
-  if (time.value && !availableTimes.value.includes(time.value)) {
+  if (time.value && !availableTimes.value.includes(time.value) && !scheduleChanged.value) {
     return [time.value, ...availableTimes.value].sort();
   }
   return availableTimes.value;
+});
+
+/**
+ * Si el usuario cambió servicio, médico o fecha durante una edición y eso deja
+ * la hora ya elegida sin caber o solapada con otra cita, se limpia para obligar
+ * a elegir una realmente libre (si no, `canSubmit` seguiría dejando guardar una
+ * cita solapada: `appointmentsForCheck` excluye la propia cita en edición, así
+ * que nada más lo detecta). Escucha `availableTimes` y no `scheduleChanged`
+ * directamente porque, al cambiar de médico, `availableTimes` recién refleja su
+ * agenda real cuando termina el fetch async de arriba — hay que revisar de
+ * nuevo en ese momento, no solo en el instante en que cambió el id.
+ */
+watch(availableTimes, () => {
+  if (!scheduleChanged.value || loadingSlots.value) return;
+  if (time.value && !availableTimes.value.includes(time.value)) {
+    time.value = "";
+  }
 });
 
 function toDateInput(d: Date): string {
@@ -302,9 +407,33 @@ function addAnotherPersonSamePhone(): void {
   searchResults.value = [];
 }
 
-const durationMin = computed(
-  () => catalog.services.find((s) => s.id === serviceId.value)?.duracion_min ?? 0,
+/**
+ * En creación, el hueco que se tocó en "Horarios disponibles" ya decidió médico,
+ * fecha y hora (y el servicio elegido en esa misma tarjeta), así que el modal los
+ * muestra en vez de volver a preguntarlos. En edición se muestran paciente y
+ * especialidad, lo único que no se puede cambiar sin crear otra cita distinta.
+ */
+const specialtyLabel = computed(() => (specialtyId.value ? catalog.specialtyName(specialtyId.value) : "…"));
+const serviceLabel = computed(() =>
+  serviceId.value ? `${catalog.serviceName(serviceId.value)} (${durationMin.value} min)` : "…",
 );
+const doctorLabel = computed(() => (doctorId.value ? catalog.doctorName(doctorId.value) : "…"));
+const dateTimeLabel = computed(() => {
+  if (!date.value || !time.value) return "…";
+  const dt = DateTime.fromFormat(`${date.value} ${time.value}`, "yyyy-LL-dd HH:mm", { zone: CLINIC_TIMEZONE });
+  if (!dt.isValid) return "…";
+  return `${formatDay(dt.toJSDate())}, ${formatTime(dt.toJSDate())}`;
+});
+
+/**
+ * El servicio solo queda fijo si vino precargado. Si la tarjeta de horarios no
+ * pudo pasar ninguno (especialidad sin servicios configurados), se sigue pidiendo
+ * acá: sin servicio la cita no se puede guardar, y no habría dónde elegirlo.
+ */
+const serviceLocked = props.mode === "create" && Boolean(props.initialServiceId);
+
+/** Un paciente ya existente no se renombra desde acá, salvo que no tuviera nombre (ver `ensurePatientId`). */
+const patientNameEditable = computed(() => !selectedPatient.value?.nombre?.trim());
 
 /**
  * Por si la fecha elegida deja de aplicar después de elegirse: cambió el
@@ -321,7 +450,12 @@ const dateProblem = computed<"weekday" | "full" | null>(() => {
 
 const canSubmit = computed(() => {
   if (!specialtyId.value || !serviceId.value || !doctorId.value || !date.value || !time.value) return false;
+  // Mientras se recarga la agenda del médico (ver watch(doctorId) más arriba), la
+  // hora todavía elegida puede ser la de antes del cambio y no haberse revalidado
+  // aún contra la nueva agenda — no dejar guardar en ese instante.
+  if (loadingSlots.value) return false;
   if (dateProblem.value !== null) return false;
+  if (patientConflict.value) return false;
   if (props.mode === "create" && !selectedPatient.value) {
     if (!newPatientName.value.trim() || !newPatientPhone.value.trim()) return false;
   }
@@ -329,15 +463,16 @@ const canSubmit = computed(() => {
 });
 
 /**
- * Devuelve el id del paciente a usar en la cita. Si es un paciente existente
- * (ej. autocreado por el bot de WhatsApp solo con el teléfono, sin nombre)
- * y el nombre cambió en el formulario, lo actualiza de una vez.
+ * Devuelve el id del paciente a usar en la cita. Un paciente ya existente no se
+ * puede renombrar desde acá — salvo que llegara sin nombre (ej. autocreado por
+ * el bot de WhatsApp solo con el teléfono), caso en el que el formulario deja
+ * completarlo (ver `patientNameEditable` y el template).
  */
 async function ensurePatientId(): Promise<string> {
   const nombre = newPatientName.value.trim() || null;
 
   if (selectedPatient.value) {
-    if (nombre !== (selectedPatient.value.nombre?.trim() || null)) {
+    if (!selectedPatient.value.nombre?.trim() && nombre) {
       await directus.request(updateItem("patients", selectedPatient.value.id, { nombre }));
     }
     return selectedPatient.value.id;
@@ -432,6 +567,34 @@ async function handleSubmit(): Promise<void> {
       </h2>
 
       <form class="space-y-4" @submit.prevent="handleSubmit">
+        <!-- Lo que ya venía decidido al abrir el modal y acá solo se confirma: en
+             creación, el hueco elegido en "Horarios disponibles"; en edición, el
+             paciente y la especialidad de la cita. -->
+        <dl class="space-y-1 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+          <div v-if="mode === 'edit'" class="flex justify-between gap-3">
+            <dt class="text-slate-500">Paciente</dt>
+            <dd class="text-right font-medium text-slate-700">{{ existingPatientLabel ?? "…" }}</dd>
+          </div>
+          <div class="flex justify-between gap-3">
+            <dt class="text-slate-500">Especialidad</dt>
+            <dd class="text-right font-medium text-slate-700">{{ specialtyLabel }}</dd>
+          </div>
+          <template v-if="mode === 'create'">
+            <div v-if="serviceLocked" class="flex justify-between gap-3">
+              <dt class="text-slate-500">Servicio</dt>
+              <dd class="text-right font-medium text-slate-700">{{ serviceLabel }}</dd>
+            </div>
+            <div class="flex justify-between gap-3">
+              <dt class="text-slate-500">Médico</dt>
+              <dd class="text-right font-medium text-slate-700">{{ doctorLabel }}</dd>
+            </div>
+            <div class="flex justify-between gap-3">
+              <dt class="text-slate-500">Fecha y hora</dt>
+              <dd class="text-right font-medium text-slate-700">{{ dateTimeLabel }}</dd>
+            </div>
+          </template>
+        </dl>
+
         <div v-if="mode === 'create'">
           <label class="mb-1 block text-sm font-medium text-slate-700">Paciente (buscar por nombre o teléfono)</label>
           <div class="flex gap-2">
@@ -472,7 +635,9 @@ async function handleSubmit(): Promise<void> {
             No se encontró; se creará un paciente nuevo.
           </p>
 
-          <div v-if="selectedPatient" class="mt-2">
+          <!-- Un paciente ya existente no se puede renombrar desde acá; solo se
+               pide el nombre si llegó sin uno (ej. autocreado por el bot). -->
+          <div v-if="selectedPatient && patientNameEditable" class="mt-2">
             <label class="mb-1 block text-sm font-medium text-slate-700">Nombre del paciente</label>
             <input
               v-model="newPatientName"
@@ -503,17 +668,9 @@ async function handleSubmit(): Promise<void> {
             </div>
           </div>
         </div>
-        <p v-else class="text-sm text-slate-600">Paciente: {{ existingPatientLabel ?? "…" }}</p>
 
-        <div>
-          <label class="mb-1 block text-sm font-medium text-slate-700">Especialidad</label>
-          <select v-model="specialtyId" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
-            <option value="" disabled>Selecciona una especialidad</option>
-            <option v-for="sp in catalog.specialties" :key="sp.id" :value="sp.id">{{ sp.nombre }}</option>
-          </select>
-        </div>
-
-        <div>
+        <!-- El servicio solo se pregunta si no vino con el hueco elegido (ver serviceLocked). -->
+        <div v-if="!serviceLocked">
           <label class="mb-1 block text-sm font-medium text-slate-700">Servicio</label>
           <p v-if="!specialtyId" class="mb-1 text-xs text-slate-500">Elige una especialidad para ver sus servicios.</p>
           <select v-model="serviceId" :disabled="!specialtyId" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:bg-slate-100">
@@ -524,7 +681,7 @@ async function handleSubmit(): Promise<void> {
           </select>
         </div>
 
-        <div>
+        <div v-if="mode === 'edit'">
           <label class="mb-1 block text-sm font-medium text-slate-700">Médico</label>
           <p v-if="!specialtyId" class="mb-1 text-xs text-slate-500">Elige una especialidad para ver sus médicos.</p>
           <select v-model="doctorId" :disabled="!specialtyId" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:bg-slate-100">
@@ -533,7 +690,7 @@ async function handleSubmit(): Promise<void> {
           </select>
         </div>
 
-        <div>
+        <div v-if="mode === 'edit'">
           <label class="mb-1 block text-sm font-medium text-slate-700">Fecha</label>
           <p v-if="!doctorId" class="mb-1 text-xs text-slate-500">Elige un médico para ver sus días disponibles.</p>
           <DatePicker
@@ -551,7 +708,7 @@ async function handleSubmit(): Promise<void> {
           </p>
         </div>
 
-        <div>
+        <div v-if="mode === 'edit'">
           <label class="mb-1 block text-sm font-medium text-slate-700">Hora</label>
           <p v-if="!serviceId || !doctorId || !date" class="text-xs text-slate-500">
             Elige servicio, médico y fecha para ver las horas disponibles.
@@ -592,6 +749,9 @@ async function handleSubmit(): Promise<void> {
           <p class="mt-1 text-xs text-slate-500">Aparece en el reporte de Cancelaciones.</p>
         </div>
 
+        <p v-if="patientConflict" class="text-sm text-red-600">
+          Este paciente ya tiene otra cita que se traslapa con este horario en esta clínica.
+        </p>
         <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
 
         <div class="flex justify-end gap-2 pt-2">

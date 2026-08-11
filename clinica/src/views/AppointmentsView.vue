@@ -15,6 +15,7 @@ import { computeDaySlots } from "@/lib/schedule";
 import { ESTADO_LABELS, ESTADO_TONE } from "@/lib/appointmentStatus";
 import { useConfirm } from "@/composables/useConfirm";
 import AppointmentFormModal from "@/components/AppointmentFormModal.vue";
+import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Badge from "@/components/ui/Badge.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
@@ -58,6 +59,18 @@ const slotsSpecialtyId = ref("");
 const sortedAppointments = computed(() =>
   [...appointments.value].sort((a, b) => a.inicio.localeCompare(b.inicio)),
 );
+
+const PAGE_SIZE = 5;
+const currentPage = ref(1);
+const totalPages = computed(() => Math.max(1, Math.ceil(sortedAppointments.value.length / PAGE_SIZE)));
+const pagedAppointments = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE;
+  return sortedAppointments.value.slice(start, start + PAGE_SIZE);
+});
+/** Si la página actual queda fuera de rango (p. ej. al cancelar la última cita de la última página), se ajusta sola en vez de mostrar una tabla vacía con datos aún cargados. */
+watch(totalPages, (tp) => {
+  if (currentPage.value > tp) currentPage.value = tp;
+});
 
 /** Los pacientes que crea el bot solo traen teléfono, así que ese es el nombre visible. */
 function patientLabel(id: string): string {
@@ -257,7 +270,10 @@ onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer);
 });
 
-watch([dateFilter, doctorFilter, estadoFilter], () => load());
+watch([dateFilter, doctorFilter, estadoFilter], () => {
+  currentPage.value = 1;
+  load();
+});
 
 // El servicio elegido pertenece a la especialidad anterior: vuelve a la duración genérica.
 watch(slotsSpecialtyId, () => {
@@ -284,6 +300,7 @@ function openEdit(appointment: AppointmentRow): void {
 
 async function handleSaved(): Promise<void> {
   showModal.value = false;
+  slotsServiceId.value = slotsServices.value[0]?.id ?? "";
   await load({ silent: true });
 }
 
@@ -355,7 +372,7 @@ async function quickCancel(appointment: AppointmentRow): Promise<void> {
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
-            <tr v-for="a in sortedAppointments" :key="a.id" class="transition hover:bg-slate-50">
+            <tr v-for="a in pagedAppointments" :key="a.id" class="transition hover:bg-slate-50">
               <td class="px-4 py-2.5 text-slate-700">{{ formatTime(new Date(a.inicio)) }}</td>
               <td class="px-4 py-2.5 text-slate-700">{{ patientLabel(a.patient) }}</td>
               <td class="px-4 py-2.5 text-slate-600">{{ especialidadName(a) }}</td>
@@ -408,6 +425,13 @@ async function quickCancel(appointment: AppointmentRow): Promise<void> {
             </tr>
           </tbody>
         </table>
+      </div>
+      <div v-if="sortedAppointments.length > PAGE_SIZE" class="flex items-center justify-between gap-2 border-t border-slate-200 px-4 py-2.5">
+        <span class="text-xs text-slate-500">Página {{ currentPage }} de {{ totalPages }}</span>
+        <div class="flex gap-2">
+          <Button variant="secondary" size="sm" :disabled="currentPage === 1" @click="currentPage--">Anterior</Button>
+          <Button variant="secondary" size="sm" :disabled="currentPage === totalPages" @click="currentPage++">Siguiente</Button>
+        </div>
       </div>
     </div>
 

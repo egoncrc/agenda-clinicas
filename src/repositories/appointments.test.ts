@@ -5,8 +5,14 @@ const { requestMock } = vi.hoisted(() => ({ requestMock: vi.fn() }));
 
 vi.mock("../directus.js", () => ({ directus: { request: requestMock } }));
 
-const { bookAppointment, cancelAppointment, rescheduleAppointment, AppointmentNotFoundError, SlotUnavailableError } =
-  await import("./appointments.js");
+const {
+  bookAppointment,
+  cancelAppointment,
+  rescheduleAppointment,
+  AppointmentNotFoundError,
+  PatientScheduleConflictError,
+  SlotUnavailableError,
+} = await import("./appointments.js");
 
 const CLINIC_ID = "clinic-1";
 
@@ -61,6 +67,7 @@ describe("bookAppointment", () => {
     requestMock
       .mockResolvedValueOnce([SERVICE]) // getService
       .mockResolvedValueOnce([]) // blockingAppointmentsForDoctor: agenda vacía
+      .mockResolvedValueOnce([]) // blockingAppointmentsForPatientInClinic: sin otras citas del paciente
       .mockResolvedValueOnce([]) // timeOffForDoctor: sin ausencias
       .mockResolvedValueOnce(appointmentRow({ id: "appt-new", patient: "patient-1" })); // createItem
 
@@ -73,7 +80,7 @@ describe("bookAppointment", () => {
     });
 
     expect(result.id).toBe("appt-new");
-    expect(requestMock).toHaveBeenCalledTimes(6);
+    expect(requestMock).toHaveBeenCalledTimes(7);
   });
 
   it("rechaza sin llegar a Directus si ya hay una cita solapada (chequeo Node)", async () => {
@@ -96,11 +103,55 @@ describe("bookAppointment", () => {
     expect(requestMock).toHaveBeenCalledTimes(4);
   });
 
+  it("rechaza si el mismo paciente ya tiene otra cita que se traslapa en la misma clínica, con OTRO médico", async () => {
+    mockGetDoctor();
+    requestMock
+      .mockResolvedValueOnce([SERVICE]) // getService
+      .mockResolvedValueOnce([]) // blockingAppointmentsForDoctor: este médico tiene la agenda libre
+      .mockResolvedValueOnce([
+        appointmentRow({ id: "appt-otro-medico", doctor: "doctor-2", patient: "patient-1" }),
+      ]); // blockingAppointmentsForPatientInClinic: el paciente ya tiene 08:00-08:30 con otro médico
+
+    await expect(
+      bookAppointment({
+        clinicId: CLINIC_ID,
+        doctorId: "doctor-1",
+        patientId: "patient-1",
+        serviceId: "svc-1",
+        inicio: new Date("2026-07-13T13:15:00.000Z"), // 08:15, se traslapa con la cita del paciente con doctor-2
+      }),
+    ).rejects.toBeInstanceOf(PatientScheduleConflictError);
+
+    // No debe haber intentado crear la cita.
+    expect(requestMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("permite la misma franja del paciente si la otra cita está en OTRA clínica", async () => {
+    mockGetDoctor();
+    requestMock
+      .mockResolvedValueOnce([SERVICE]) // getService
+      .mockResolvedValueOnce([]) // blockingAppointmentsForDoctor
+      .mockResolvedValueOnce([]) // blockingAppointmentsForPatientInClinic: filtrado por clinic, no ve la de otra sede
+      .mockResolvedValueOnce([]) // timeOffForDoctor
+      .mockResolvedValueOnce(appointmentRow({ id: "appt-new", patient: "patient-1" })); // createItem
+
+    const result = await bookAppointment({
+      clinicId: CLINIC_ID,
+      doctorId: "doctor-1",
+      patientId: "patient-1",
+      serviceId: "svc-1",
+      inicio: new Date("2026-07-13T13:15:00.000Z"),
+    });
+
+    expect(result.id).toBe("appt-new");
+  });
+
   it("rechaza sin llegar a Directus si el horario cae dentro de una ausencia (time off) del odontólogo", async () => {
     mockGetDoctor();
     requestMock
       .mockResolvedValueOnce([SERVICE]) // getService
       .mockResolvedValueOnce([]) // blockingAppointmentsForDoctor: agenda vacía
+      .mockResolvedValueOnce([]) // blockingAppointmentsForPatientInClinic: sin otras citas del paciente
       .mockResolvedValueOnce([
         { id: "to-1", doctor: "doctor-1", inicio: "2026-07-13T13:00:00.000Z", fin: "2026-07-13T18:00:00.000Z" },
       ]); // timeOffForDoctor: odontólogo ausente 08:00-13:00 local
@@ -116,7 +167,7 @@ describe("bookAppointment", () => {
     ).rejects.toBeInstanceOf(SlotUnavailableError);
 
     // No debe haber intentado crear la cita.
-    expect(requestMock).toHaveBeenCalledTimes(5);
+    expect(requestMock).toHaveBeenCalledTimes(6);
   });
 
   it("condición de carrera real: el chequeo de Node pasa pero el hook de Directus rechaza con 403 FORBIDDEN", async () => {
@@ -135,6 +186,7 @@ describe("bookAppointment", () => {
     requestMock
       .mockResolvedValueOnce([SERVICE]) // getService
       .mockResolvedValueOnce([]) // blockingAppointmentsForDoctor: Node no ve nada (otro proceso reservó justo antes)
+      .mockResolvedValueOnce([]) // blockingAppointmentsForPatientInClinic: sin otras citas del paciente
       .mockResolvedValueOnce([]) // timeOffForDoctor: sin ausencias
       .mockRejectedValueOnce(directusForbiddenError); // createItem: el hook de Directus sí lo atrapa
 
@@ -153,8 +205,9 @@ describe("bookAppointment", () => {
     mockGetDoctor();
     requestMock
       .mockResolvedValueOnce([SERVICE])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]) // blockingAppointmentsForDoctor
+      .mockResolvedValueOnce([]) // blockingAppointmentsForPatientInClinic
+      .mockResolvedValueOnce([]) // timeOffForDoctor
       .mockRejectedValueOnce(new Error("Directus caído"));
 
     await expect(
@@ -192,8 +245,9 @@ describe("dos pacientes pidiendo el mismo hueco (concurrencia)", () => {
     mockGetDoctor();
     requestMock
       .mockResolvedValueOnce([SERVICE])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]) // blockingAppointmentsForDoctor
+      .mockResolvedValueOnce([]) // blockingAppointmentsForPatientInClinic
+      .mockResolvedValueOnce([]) // timeOffForDoctor
       .mockResolvedValueOnce(appointmentRow({ id: "appt-first", patient: "patient-1" }));
 
     const first = await bookAppointment({
@@ -230,6 +284,7 @@ describe("rescheduleAppointment", () => {
       .mockResolvedValueOnce([appointmentRow({ id: "appt-1", patient: "patient-1" })]) // lookup por id
       .mockResolvedValueOnce([SERVICE]) // getService
       .mockResolvedValueOnce([]) // blockingAppointmentsForDoctor (ya excluye la propia cita en el filtro de JS)
+      .mockResolvedValueOnce([]) // blockingAppointmentsForPatientInClinic (idem)
       .mockResolvedValueOnce([]) // timeOffForDoctor: sin ausencias
       .mockResolvedValueOnce(
         appointmentRow({ id: "appt-1", patient: "patient-1", inicio: "2026-07-14T09:00:00.000-05:00" }),
@@ -245,6 +300,7 @@ describe("rescheduleAppointment", () => {
       .mockResolvedValueOnce([self]) // lookup por id
       .mockResolvedValueOnce([SERVICE]) // getService
       .mockResolvedValueOnce([self]) // blockingAppointmentsForDoctor devuelve la misma fila que se está moviendo
+      .mockResolvedValueOnce([self]) // blockingAppointmentsForPatientInClinic: idem, también se filtra por id
       .mockResolvedValueOnce([]) // timeOffForDoctor: sin ausencias
       .mockResolvedValueOnce(self); // updateItem: como se filtra a sí misma, no hay solape real
 
@@ -264,11 +320,26 @@ describe("rescheduleAppointment", () => {
     ).rejects.toBeInstanceOf(SlotUnavailableError);
   });
 
+  it("rechaza si el paciente ya tiene otra cita que se traslapa en la misma clínica, con OTRO médico", async () => {
+    requestMock
+      .mockResolvedValueOnce([appointmentRow({ id: "appt-1", patient: "patient-1" })]) // lookup
+      .mockResolvedValueOnce([SERVICE]) // getService
+      .mockResolvedValueOnce([]) // blockingAppointmentsForDoctor: este médico tiene la agenda libre
+      .mockResolvedValueOnce([
+        appointmentRow({ id: "appt-otro-medico", doctor: "doctor-2", patient: "patient-1" }),
+      ]); // blockingAppointmentsForPatientInClinic: el paciente ya tiene otra cita en ese horario con otro médico
+
+    await expect(
+      rescheduleAppointment("appt-1", CLINIC_ID, ["patient-1"], new Date("2026-07-13T13:00:00.000Z")),
+    ).rejects.toBeInstanceOf(PatientScheduleConflictError);
+  });
+
   it("rechaza si el nuevo horario cae dentro de una ausencia (time off) del odontólogo", async () => {
     requestMock
       .mockResolvedValueOnce([appointmentRow({ id: "appt-1", patient: "patient-1" })]) // lookup
       .mockResolvedValueOnce([SERVICE]) // getService
       .mockResolvedValueOnce([]) // blockingAppointmentsForDoctor: agenda vacía
+      .mockResolvedValueOnce([]) // blockingAppointmentsForPatientInClinic: sin otras citas del paciente
       .mockResolvedValueOnce([
         { id: "to-1", doctor: "doctor-1", inicio: "2026-07-13T13:00:00.000Z", fin: "2026-07-13T18:00:00.000Z" },
       ]); // timeOffForDoctor: odontólogo ausente 08:00-13:00 local
