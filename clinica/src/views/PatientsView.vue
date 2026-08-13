@@ -37,11 +37,10 @@ const sort = ref<PatientSort>({ ...DEFAULT_SORT });
 
 /** Columnas de texto: las dos filas del encabezado y su filtro salen de acá. */
 const TEXT_COLUMNS: { key: keyof PatientColumnFilters; label: string }[] = [
+  { key: "identificacion", label: "Identificación" },
   { key: "nombre", label: "Nombre" },
   { key: "telefono", label: "Teléfono" },
-  { key: "identificacion", label: "Identificación" },
   { key: "correo", label: "Correo" },
-  { key: "ubicacion", label: "Ubicación" },
 ];
 
 const FILTER_INPUT =
@@ -177,10 +176,6 @@ async function handleSaved(): Promise<void> {
   await load({ silent: true });
 }
 
-function ubicacion(p: PatientRow): string {
-  return [p.distrito, p.canton, p.provincia].filter(Boolean).join(", ") || "—";
-}
-
 /**
  * Baja lógica, nunca borrado: `appointments`, `messages` y `waitlist` apuntan
  * al paciente con ON DELETE CASCADE, así que borrarlo se llevaría su historial
@@ -245,7 +240,7 @@ async function toggleActivo(p: PatientRow): Promise<void> {
               <th
                 v-for="col in TEXT_COLUMNS"
                 :key="col.key"
-                class="px-4 pt-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500"
+                class="whitespace-nowrap px-4 pt-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500"
                 :aria-sort="sort.key === col.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'"
               >
                 <button
@@ -286,7 +281,7 @@ async function toggleActivo(p: PatientRow): Promise<void> {
               <th class="px-4 pt-2.5"></th>
             </tr>
             <tr class="border-b border-slate-200">
-              <th v-for="col in TEXT_COLUMNS" :key="col.key" class="px-4 pb-2.5 pt-1.5 align-top font-normal">
+              <th v-for="col in TEXT_COLUMNS" :key="col.key" class="whitespace-nowrap px-4 pb-2.5 pt-1.5 align-top font-normal">
                 <input
                   v-model="columnFilters[col.key]"
                   :class="FILTER_INPUT"
@@ -307,19 +302,18 @@ async function toggleActivo(p: PatientRow): Promise<void> {
           <tbody class="divide-y divide-slate-100">
             <!-- El vacío va DENTRO de la tabla: si la reemplazara, un filtro sin resultados escondería el input que hay que limpiar. -->
             <tr v-if="patients.length === 0">
-              <td colspan="7">
+              <td colspan="6">
                 <EmptyState title="No hay pacientes para este filtro" />
               </td>
             </tr>
             <tr v-for="p in patients" :key="p.id" class="transition hover:bg-slate-50">
-              <td class="px-4 py-2.5 text-slate-700">
+              <td class="whitespace-nowrap px-4 py-2.5 text-slate-600">{{ p.identificacion || "—" }}</td>
+              <td class="whitespace-nowrap px-4 py-2.5 text-slate-700">
                 {{ p.nombre?.trim() || "(sin nombre)" }}
                 <Badge v-if="p.titular" tone="neutral">Titular</Badge>
               </td>
-              <td class="px-4 py-2.5 text-slate-600">{{ p.telefono }}</td>
-              <td class="px-4 py-2.5 text-slate-600">{{ p.identificacion || "—" }}</td>
-              <td class="px-4 py-2.5 text-slate-600">{{ p.correo || "—" }}</td>
-              <td class="px-4 py-2.5 text-slate-600">{{ ubicacion(p) }}</td>
+              <td class="whitespace-nowrap px-4 py-2.5 text-slate-600">{{ p.telefono }}</td>
+              <td class="whitespace-nowrap px-4 py-2.5 text-slate-600">{{ p.correo || "—" }}</td>
               <td class="px-4 py-2.5">
                 <Badge :tone="p.activo === false ? 'neutral' : 'success'">
                   {{ p.activo === false ? "Dado de baja" : "Activo" }}

@@ -16,6 +16,10 @@
   --color-brand-900: #14233a;
 }
 
+html {
+  font-size: 18px;
+}
+
 body {
   font-family: var(--font-sans);
 }
