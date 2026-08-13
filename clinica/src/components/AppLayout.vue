@@ -3,37 +3,12 @@ import { computed, ref } from "vue";
 import { RouterLink, RouterView, useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import { useClinicaStore } from "@/stores/clinica";
+import AppNav from "@/components/AppNav.vue";
 import NavIcon from "@/components/ui/NavIcon.vue";
 
 const auth = useAuthStore();
 const clinica = useClinicaStore();
 const router = useRouter();
-
-type NavLink = { to: string; label: string; icon: "dashboard" | "calendar" | "clock" | "flag" | "list" | "message" | "building" | "users" | "chart" };
-
-const navLinks = computed<NavLink[]>(() => {
-  const links: NavLink[] = [
-    { to: "/", label: "Dashboard", icon: "dashboard" },
-    { to: "/citas", label: "Citas", icon: "calendar" },
-    { to: "/horario", label: "Horario", icon: "clock" },
-    { to: "/suspensiones", label: "Suspensiones", icon: "flag" },
-    // Para los tres roles: Directus recorta las filas, así que un médico ve los
-    // mismos reportes calculados solo sobre sus citas.
-    { to: "/reportes", label: "Reportes", icon: "chart" },
-  ];
-  // Solo recepción/admin: el mantenimiento de la ficha del paciente (y su baja)
-  // no es parte del flujo de un médico, que además solo puede leer los pacientes
-  // con los que tiene cita.
-  if (auth.isReceptionist || auth.isAdmin) links.push({ to: "/pacientes", label: "Pacientes", icon: "users" });
-  // Solo recepción/admin: la gestión de lista de espera no es parte del flujo de un médico.
-  if (auth.isReceptionist || auth.isAdmin) links.push({ to: "/lista-espera", label: "Lista de espera", icon: "list" });
-  // Solo recepción: es su flujo de trabajo, y la policy Doctor ni siquiera tiene
-  // permisos sobre `messages`, así que a un médico le saldrían puros 403.
-  if (auth.isReceptionist) links.push({ to: "/mensajes", label: "Mensajes", icon: "message" });
-  // Solo Administrator: da de alta clínicas nuevas, no es parte del trabajo diario de médicos/recepción.
-  if (auth.isAdmin) links.push({ to: "/admin/clinicas", label: "Clínicas", icon: "building" });
-  return links;
-});
 
 const mobileMenuOpen = ref(false);
 
@@ -44,10 +19,6 @@ const initials = computed(() => {
   if (first && last) return `${first}${last}`.toUpperCase();
   return (auth.user?.email?.[0] ?? "?").toUpperCase();
 });
-
-const linkClasses =
-  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900";
-const activeLinkClasses = "!bg-brand-50 !text-brand-800";
 
 async function handleLogout(): Promise<void> {
   mobileMenuOpen.value = false;
@@ -63,7 +34,9 @@ async function handleChangeClinic(): Promise<void> {
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-slate-50">
+  <!-- Altura fija del viewport: el menú lateral no debe crecer con el contenido de la vista.
+       El único que scrollea es el <main>. -->
+  <div class="flex h-dvh overflow-hidden bg-slate-50">
     <!-- Sidebar (desktop) -->
     <aside class="hidden w-60 flex-none flex-col border-r border-slate-200 bg-white lg:flex">
       <div class="flex items-center gap-2.5 px-5 py-5">
@@ -73,19 +46,7 @@ async function handleChangeClinic(): Promise<void> {
         <span class="font-display text-sm font-semibold text-brand-900">Clínica</span>
       </div>
 
-      <nav class="flex-1 space-y-0.5 px-3 py-2">
-        <RouterLink
-          v-for="link in navLinks"
-          :key="link.to"
-          :to="link.to"
-          :class="linkClasses"
-          :active-class="activeLinkClasses"
-          :exact-active-class="activeLinkClasses"
-        >
-          <span class="h-4.5 w-4.5 flex-none"><NavIcon :name="link.icon" /></span>
-          {{ link.label }}
-        </RouterLink>
-      </nav>
+      <AppNav />
 
       <div v-if="clinica.activeClinic" class="border-t border-slate-200 px-3 pt-3">
         <button
@@ -132,7 +93,7 @@ async function handleChangeClinic(): Promise<void> {
       </div>
     </aside>
 
-    <div class="flex min-w-0 flex-1 flex-col">
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <!-- Header (mobile) -->
       <header class="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 lg:hidden">
         <div class="flex items-center gap-2.5">
@@ -172,20 +133,7 @@ async function handleChangeClinic(): Promise<void> {
               <span class="font-display text-sm font-semibold text-brand-900">Clínica</span>
             </div>
 
-            <nav class="flex-1 space-y-0.5 px-3 py-2">
-              <RouterLink
-                v-for="link in navLinks"
-                :key="link.to"
-                :to="link.to"
-                :class="linkClasses"
-                :active-class="activeLinkClasses"
-                :exact-active-class="activeLinkClasses"
-                @click="mobileMenuOpen = false"
-              >
-                <span class="h-4.5 w-4.5 flex-none"><NavIcon :name="link.icon" /></span>
-                {{ link.label }}
-              </RouterLink>
-            </nav>
+            <AppNav @navigate="mobileMenuOpen = false" />
 
             <div v-if="clinica.activeClinic" class="border-t border-slate-200 px-3 pt-3">
               <button
@@ -233,7 +181,7 @@ async function handleChangeClinic(): Promise<void> {
       </Transition>
 
       <main
-        class="flex-1 px-4 py-6 sm:px-6 lg:px-10 lg:py-8"
+        class="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-8"
         style="background-image: radial-gradient(circle at 1px 1px, rgb(226 232 240) 1px, transparent 0); background-size: 24px 24px"
       >
         <div class="mx-auto w-full max-w-6xl">

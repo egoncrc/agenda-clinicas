@@ -17,9 +17,22 @@ const router = createRouter({
       component: () => import("@/views/DashboardView.vue"),
     },
     {
+      // Consulta de la agenda del día: tabla con sus propios filtros (fecha,
+      // médico, estado). Agendar vive aparte, abajo — compartir la fecha entre
+      // las dos funciones (como cuando eran dos tarjetas de esta misma vista)
+      // confundía, porque el resto de los filtros solo aplicaba a la mitad.
       path: "/citas",
       name: "citas",
       component: () => import("@/views/AppointmentsView.vue"),
+    },
+    {
+      // Buscar hueco libre y agendar, con su propia fecha/especialidad/servicio.
+      // Solo recepción/admin: la policy Doctor no tiene `appointments.create`,
+      // así que un médico solo llegaba a un 403 al guardar.
+      path: "/citas/agendar",
+      name: "agendar-cita",
+      component: () => import("@/views/BookAppointmentView.vue"),
+      meta: { blockDoctor: true },
     },
     {
       path: "/horario",
