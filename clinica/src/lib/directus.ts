@@ -14,6 +14,7 @@ export interface ClinicRow {
   ycloud_api_key?: string | null;
   ycloud_webhook_secret?: string | null;
   booking_public_link_token?: string | null;
+  telefono_contacto?: string | null;
 }
 
 export interface SpecialtyRow {

@@ -7,7 +7,7 @@ import type { AppointmentRow, PatientRow } from "@/lib/directus";
 import { useAuthStore } from "@/stores/auth";
 import { useCatalogStore } from "@/stores/catalog";
 import { useClinicaStore } from "@/stores/clinica";
-import { CLINIC_TIMEZONE, formatDay, formatTime } from "@/lib/dateRanges";
+import { CLINIC_TIMEZONE, formatDay, formatTime, formatTime12h } from "@/lib/dateRanges";
 import { buildConfirmationMessage, waMeLink } from "@/lib/messageTemplates";
 import { dateRangeFilter } from "@/lib/queryHelpers";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
@@ -94,7 +94,8 @@ const waLinks = computed<Record<string, string | null>>(() => {
         especialidadNombre: especialidadName(a),
         doctorNombre: catalog.doctorName(a.doctor),
         fechaTexto: formatDay(inicio),
-        horaTexto: formatTime(inicio),
+        horaTexto: formatTime12h(inicio),
+        telefonoContacto: clinica.activeClinic?.telefono_contacto ?? "",
       }),
     );
   }

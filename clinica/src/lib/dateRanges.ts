@@ -100,6 +100,13 @@ export function formatTime(date: Date): string {
   return DateTime.fromJSDate(date, { zone: CLINIC_TIMEZONE }).toFormat("HH:mm");
 }
 
+/** "11:00 AM" — solo para el texto de los mensajes; el resto del panel sigue usando formatTime (24h). */
+export function formatTime12h(date: Date): string {
+  const dt = DateTime.fromJSDate(date, { zone: CLINIC_TIMEZONE });
+  const meridiem = dt.hour < 12 ? "AM" : "PM";
+  return `${dt.toFormat("h:mm")} ${meridiem}`;
+}
+
 export function formatDateTime(date: Date): string {
   return DateTime.fromJSDate(date, { zone: CLINIC_TIMEZONE }).setLocale("es").toFormat("d LLL, HH:mm");
 }
