@@ -184,7 +184,7 @@ async function handleChangeClinic(): Promise<void> {
         class="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-8"
         style="background-image: radial-gradient(circle at 1px 1px, rgb(226 232 240) 1px, transparent 0); background-size: 24px 24px"
       >
-        <div class="mx-auto w-full max-w-6xl">
+        <div class="mx-auto w-[90%] max-w-none">
           <RouterView />
         </div>
       </main>

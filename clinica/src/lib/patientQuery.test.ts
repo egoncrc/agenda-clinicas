@@ -34,23 +34,16 @@ describe("buildPatientFilter", () => {
     expect(filtro({ estado: "todos" })).toHaveLength(1);
   });
 
-  it("el buscador global y el filtro de Ubicación conviven como dos _or distintos", () => {
-    const conditions = filtro({ search: "ana", columns: { ubicacion: "escazú" } });
+  it("el buscador global arma un _or con los cuatro campos de texto", () => {
+    const conditions = filtro({ search: "ana" });
     const ors = conditions.filter((c) => "_or" in c);
-    expect(ors).toHaveLength(2);
+    expect(ors).toHaveLength(1);
     expect(ors[0]).toEqual({
       _or: [
         { nombre: { _icontains: "ana" } },
         { telefono: { _contains: "ana" } },
         { identificacion: { _icontains: "ana" } },
         { correo: { _icontains: "ana" } },
-      ],
-    });
-    expect(ors[1]).toEqual({
-      _or: [
-        { distrito: { _icontains: "escazú" } },
-        { canton: { _icontains: "escazú" } },
-        { provincia: { _icontains: "escazú" } },
       ],
     });
   });
@@ -77,11 +70,6 @@ describe("patientSort", () => {
 
   it("prefija con guion en descendente", () => {
     expect(patientSort({ key: "nombre", dir: "desc" })).toEqual(["-nombre"]);
-  });
-
-  it("ubicación se traduce a los tres campos que la componen", () => {
-    expect(patientSort({ key: "ubicacion", dir: "asc" })).toEqual(["distrito", "canton", "provincia"]);
-    expect(patientSort({ key: "ubicacion", dir: "desc" })).toEqual(["-distrito", "-canton", "-provincia"]);
   });
 
   it("estado se traduce a activo", () => {

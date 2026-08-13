@@ -12,7 +12,6 @@ export interface PatientColumnFilters {
   telefono: string;
   identificacion: string;
   correo: string;
-  ubicacion: string;
 }
 
 export const EMPTY_COLUMN_FILTERS: PatientColumnFilters = {
@@ -20,7 +19,6 @@ export const EMPTY_COLUMN_FILTERS: PatientColumnFilters = {
   telefono: "",
   identificacion: "",
   correo: "",
-  ubicacion: "",
 };
 
 export type PatientSortKey = keyof PatientColumnFilters | "estado";
@@ -75,30 +73,10 @@ export function buildPatientFilter(input: {
   const correo = input.columns.correo.trim();
   if (correo) conditions.push({ correo: { _icontains: correo } });
 
-  // "Ubicación" no existe como columna: es distrito + cantón + provincia.
-  const ubicacion = input.columns.ubicacion.trim();
-  if (ubicacion) {
-    conditions.push({
-      _or: [
-        { distrito: { _icontains: ubicacion } },
-        { canton: { _icontains: ubicacion } },
-        { provincia: { _icontains: ubicacion } },
-      ],
-    });
-  }
-
   return { _and: conditions };
 }
 
-type PatientSortField =
-  | "nombre"
-  | "telefono"
-  | "identificacion"
-  | "correo"
-  | "distrito"
-  | "canton"
-  | "provincia"
-  | "activo";
+type PatientSortField = "nombre" | "telefono" | "identificacion" | "correo" | "activo";
 
 /** El SDK tipa `sort` como `Field | \`-${Field}\``, así que no sirve un `string[]`. */
 export type PatientSortToken = PatientSortField | `-${PatientSortField}`;
@@ -108,9 +86,6 @@ const SORT_FIELDS: Record<PatientSortKey, readonly PatientSortField[]> = {
   telefono: ["telefono"],
   identificacion: ["identificacion"],
   correo: ["correo"],
-  // Mismo orden en que se arma el texto visible (`distrito, cantón, provincia`),
-  // para que la columna se lea ordenada.
-  ubicacion: ["distrito", "canton", "provincia"],
   // Ojo: `activo` en NULL no es `false` y Postgres lo manda al final en ASC, así
   // que las filas creadas fuera del panel (que se muestran como "Activo") no
   // quedan agrupadas con las `true`. Sin campo calculado no hay forma de evitarlo.
