@@ -17,7 +17,11 @@ Dos reglas al guardar (ambas replicadas en la extensión `working-hours-guard`, 
 - Hora: dos `<select>` (hora 00-23 + minuto solo 00/30) en vez de un `input[type=time]` nativo — un `step` nativo no evita que el navegador siga ofreciendo los 60 minutos en su selector.
 - Fecha: calendario propio (`components/DatePicker.vue`) en vez de `input[type=date]` nativo — deshabilita visualmente los días anteriores a hoy y los días de la semana sin horario laboral para el odontólogo elegido (ej. domingos, si nadie atiende ese día). Se recalcula al cambiar de odontólogo (`watch(dentistId)` trae sus `working_hours`); si la fecha ya elegida deja de ser válida al cambiar de odontólogo, `dateMatchesDentistSchedule` bloquea el guardado con un aviso.
 
-**Horarios disponibles por odontólogo (`AppointmentsView.vue`):** debajo de la tabla de citas, una sección muestra los huecos de 30 min de cada odontólogo para el día del filtro, calculados con `src/lib/schedule.ts` (`computeDaySlots`: horario laboral + `time_off` + citas activas). Se recalcula solo al cambiar la fecha (no al cambiar los filtros de odontólogo/estado de la tabla, que no deberían afectar la disponibilidad real). Click en un hueco libre abre el modal de nueva cita precargado con ese odontólogo/hora.
+**Citas: dos pantallas, no dos tarjetas.** Consultar la agenda y agendar viven en rutas separadas, agrupadas bajo el ítem "Citas" del menú (`AppNav.vue`, el único componente de navegación: lo comparten el sidebar de escritorio y el drawer móvil):
+- **`/citas` (`AppointmentsView.vue`) — "Agendadas":** la tabla de citas del día, con sus filtros de fecha, odontólogo y estado, edición, cancelación rápida y el enlace de WhatsApp para confirmar.
+- **`/citas/agendar` (`BookAppointmentView.vue`) — "Agendar":** los huecos de 30 min de cada odontólogo para el día elegido, calculados con `src/lib/schedule.ts` (`computeDaySlots`: horario laboral + `time_off` + citas activas), con sus propios filtros de fecha, especialidad y servicio. Click en un hueco libre abre el modal de nueva cita precargado con ese odontólogo/hora/servicio. Solo recepción/admin: la policy `Doctor` no tiene `appointments.create`, así que un odontólogo solo llegaba a un 403 al guardar (la ruta lleva `meta.blockDoctor`).
+
+Antes eran dos tarjetas de la misma pantalla y **compartían el filtro de fecha**, pero cada una tenía además filtros que la otra ignoraba (odontólogo/estado no afectan la disponibilidad; especialidad/servicio no afectan la tabla). Las pruebas con usuarios mostraron que esa mezcla confundía. La separación es visual: el cálculo de huecos, las consultas y el modal no cambiaron, solo que cada pantalla tiene ahora su propia fecha y su propio refresco en segundo plano (polling de 15 s).
 
 **Importante:** el store `catalog` (odontólogos/servicios) se cachea una sola vez por pestaña — `auth.ts` llama a `catalog.reset()` en `login()` y `logout()` para que cambiar de cuenta en la misma pestaña siempre traiga una lista fresca acorde a los permisos del nuevo usuario, en vez de arrastrar la del usuario anterior (bug real encontrado: una recepcionista que iniciaba sesión justo después de un odontólogo, sin recargar, veía solo la lista reducida de ese odontólogo).
 
@@ -73,7 +77,8 @@ src/
   views/
     LoginView.vue
     DashboardView.vue
-    AppointmentsView.vue    # listar/filtrar/crear/editar/cancelar citas + horarios disponibles del día
+    AppointmentsView.vue    # /citas: listar/filtrar/editar/cancelar las citas del día
+    BookAppointmentView.vue  # /citas/agendar: huecos libres por odontólogo (solo recepción/admin)
     WorkingHoursView.vue     # mantenimiento del horario laboral (agregar/editar/eliminar bloques)
     MessagesView.vue          # mensajes que la recepción envía a mano (ver sección abajo)
     PatientsView.vue           # mantenimiento de la ficha del paciente (ver sección abajo)
@@ -81,6 +86,7 @@ src/
     ReportView.vue               # renderizador genérico: sirve a TODOS los reportes
   components/
     AppLayout.vue
+    AppNav.vue                    # menú único (sidebar + drawer móvil), con el submenú de Citas
     StatCard.vue
     reports/ReportFilterBar.vue  # controles según lo que declare el reporte + reglas de rol
     ui/DataTable.vue              # tabla dirigida por columns+rows
@@ -99,7 +105,7 @@ El panel siempre opera sobre **una clínica activa** (`stores/clinica.ts`, persi
 - `lib/clinicDoctors.ts` (`loadClinicDoctors`) aplana identidad + vínculo en un `ClinicDoctor` (`{id, nombre, activo, usuario, specialty, linkId}`); lo usan `stores/catalog.ts` (solo activos, clínica actual) y `ClinicManageView.vue` (todos, porque ahí se dan de alta y de baja).
 - `auth.ownDoctorId` es la identidad global del médico, no depende de la clínica activa. `WorkingHoursView`/`TimeOffView` lo usan para resolver "mi horario" / "mis ausencias" en vez de tomar el primero del catálogo.
 - **Horario y ausencias son por clínica** (`working_hours.clinic`, `time_off.clinic`): el mismo médico puede atender lunes-miércoles en una sede y jueves-viernes en otra, y una ausencia bloquea solo la sede donde se registró.
-- **Las citas, en cambio, se miran cross-clínica**: nadie puede estar en dos sedes a la vez. Por eso `AppointmentsView`/`AppointmentFormModal` calculan los huecos sin filtrar las citas por clínica. Contrapartida conocida: los permisos solo dejan leer las citas de la clínica propia, así que el panel puede ofrecer un hueco que el hook `appointments-overlap-guard` luego rechaza con 403 "se solapa" — es la única salida que no expone datos de otro tenant, y por eso el mensaje del error no dice en qué clínica está la cita que estorba.
+- **Las citas, en cambio, se miran cross-clínica**: nadie puede estar en dos sedes a la vez. Por eso `BookAppointmentView`/`AppointmentFormModal` calculan los huecos sin filtrar las citas por clínica. Contrapartida conocida: los permisos solo dejan leer las citas de la clínica propia, así que el panel puede ofrecer un hueco que el hook `appointments-overlap-guard` luego rechaza con 403 "se solapa" — es la única salida que no expone datos de otro tenant, y por eso el mensaje del error no dice en qué clínica está la cita que estorba.
 - En `/admin/clinicas/:id`, la pestaña Médicos tiene dos botones: **"+ Agregar médico"** (persona nueva) y **"Vincular existente"** (`LinkDoctorModal.vue`), que reutiliza una ficha ya creada en otra clínica y solo agrega el vínculo. Usar el primero para alguien que ya existe crearía una segunda identidad, y entonces nada impediría agendarlo a la misma hora en las dos sedes.
 - Al editar, el checkbox "Activo" afecta al vínculo de esa clínica. La cuenta de Directus solo se suspende si el médico quedó inactivo en **todas** sus clínicas.
 

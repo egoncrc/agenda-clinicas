@@ -22,7 +22,7 @@ const ALL_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7];
 const props = defineProps<{
   mode: "create" | "edit";
   appointment?: AppointmentRow;
-  /** Para precargar desde un hueco libre de "Horarios disponibles" en Citas: doctora, servicio y horario ya elegidos. */
+  /** Para precargar desde un hueco libre de la pantalla Agendar (`/citas/agendar`): doctora, servicio y horario ya elegidos. */
   initialDoctorId?: string;
   initialServiceId?: string;
   initialDateTime?: Date;
