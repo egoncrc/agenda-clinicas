@@ -210,6 +210,12 @@ async function main() {
       meta: { interface: "input", note: "Vacío = usa BOOKING_PUBLIC_LINK_TOKEN global." },
       schema: {},
     },
+    {
+      field: "telefono_contacto",
+      type: "string",
+      meta: { interface: "input", note: "Teléfono de contacto visible al paciente en los mensajes (distinto de whatsapp_numero, que es el número de envío de la API)." },
+      schema: {},
+    },
   ]);
 
   // ---- Campo M2O clinic en cada colección que se aísla por clínica ----

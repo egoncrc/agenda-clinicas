@@ -25,7 +25,9 @@ function primerNombre(nombre: string | null | undefined): string | null {
  */
 function saludo(pacienteNombre: string | null | undefined, clinicaNombre: string): string {
   const n = primerNombre(pacienteNombre);
-  return n ? `Hola, ${n}. Le saludamos de ${clinicaNombre}.` : `Hola. Le saludamos de ${clinicaNombre}.`;
+  return n
+    ? `Hola ${n}, le saludamos de parte de la clínica ${clinicaNombre}.`
+    : `Hola. Le saludamos de parte de la clínica ${clinicaNombre}.`;
 }
 
 export interface ConfirmationMessageInput {
@@ -37,19 +39,20 @@ export interface ConfirmationMessageInput {
   doctorNombre: string;
   /** "martes 29 de julio" — formatDay() de @/lib/dateRanges. */
   fechaTexto: string;
-  /** "10:30" — formatTime() de @/lib/dateRanges. */
+  /** "11:00 AM" — formatTime12h() de @/lib/dateRanges. */
   horaTexto: string;
+  telefonoContacto: string;
 }
 
 export function buildConfirmationMessage(i: ConfirmationMessageInput): string {
   return [
     saludo(i.pacienteNombre, i.clinicaNombre),
     "",
-    `Le recordamos su cita de ${i.servicioNombre}${i.especialidadNombre ? ` (${i.especialidadNombre})` : ""} con ${i.doctorNombre} el ${i.fechaTexto} a las ${i.horaTexto}.`,
+    `Queremos recordarle que tiene programada una cita de ${i.servicioNombre}${i.especialidadNombre ? ` (${i.especialidadNombre})` : ""} con ${i.doctorNombre} el ${i.fechaTexto} a las ${i.horaTexto}.`,
     "",
-    "¿Nos confirma si puede asistir? Si necesita cambiarla, con gusto le buscamos otro espacio.",
+    "¿Nos confirma por favor si puede asistir? ¡Muchas gracias!",
     "",
-    "¡Muchas gracias!",
+    `Si desea cancelar o reagendar su cita puede comunicarse con nosotros al teléfono ${i.telefonoContacto} y con gusto le colaboramos con una nueva fecha.`,
   ].join("\n");
 }
 
@@ -84,8 +87,11 @@ export interface CancellationMessageInput {
   doctorNombre: string;
   /** "martes 29 de julio" — formatDay() de @/lib/dateRanges. */
   fechaTexto: string;
-  /** "10:30" — formatTime() de @/lib/dateRanges. */
+  /** "09:00 AM" — formatTime12h() de @/lib/dateRanges. */
   horaTexto: string;
+  telefonoContacto: string;
+  /** URL del formulario público de agendar de esta clínica — ver bookingLink(). */
+  enlaceAgendar: string;
 }
 
 /**
@@ -102,12 +108,21 @@ export function buildCancellationMessage(i: CancellationMessageInput): string {
   return [
     saludo(i.pacienteNombre, i.clinicaNombre),
     "",
-    `Lamentamos informarle que debemos cancelar su cita de ${i.servicioNombre} con ${i.doctorNombre} del ${i.fechaTexto} a las ${i.horaTexto}, por un cambio imprevisto en la agenda del profesional.`,
+    `Queremos informarle que debido a una situación imprevista presentada al ${i.doctorNombre} debemos cancelar su cita de ${i.servicioNombre} del ${i.fechaTexto} a las ${i.horaTexto}.`,
     "",
-    "Le ofrecemos disculpas por el inconveniente. Con gusto le reagendamos: cuéntenos qué día y a qué hora le queda mejor y se lo apartamos.",
+    `Le ofrecemos disculpas por el inconveniente y con gusto podemos reagendar la cita si nos indica su horario de preferencia o puede verificar el horario más conveniente para usted en el siguiente enlace: ${i.enlaceAgendar}`,
+    "",
+    `También puede comunicarse con nosotros al teléfono ${i.telefonoContacto} y con gusto le colaboramos con una nueva fecha.`,
     "",
     "¡Quedamos atentos!",
   ].join("\n");
+}
+
+const BOOKING_BASE_URL = "https://panel.egonia.site/agendar";
+
+/** Link público de agendar de una clínica — el token va embebido en el build público, no en la URL (ver PublicBookingView.vue). */
+export function bookingLink(clinicId: string): string {
+  return `${BOOKING_BASE_URL}?clinica=${clinicId}`;
 }
 
 /** Código de país para teléfonos guardados en formato local viejo, sin prefijo. */

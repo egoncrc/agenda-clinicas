@@ -6,11 +6,11 @@ import { directus } from "@/lib/directus";
 import type { AppointmentRow, PatientRow, ServiceRow } from "@/lib/directus";
 import { useCatalogStore } from "@/stores/catalog";
 import { useClinicaStore } from "@/stores/clinica";
-import { CLINIC_TIMEZONE, formatDay, formatTime, now, toIsoOrThrow } from "@/lib/dateRanges";
+import { CLINIC_TIMEZONE, formatDay, formatTime, formatTime12h, now, toIsoOrThrow } from "@/lib/dateRanges";
 import { dateRangeFilter } from "@/lib/queryHelpers";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
 import { computeRecallItems, recallKey, RECALL_MAX_OVERDUE_MONTHS, type RecallItem } from "@/lib/recall";
-import { buildCancellationMessage, buildConfirmationMessage, buildRecallMessage, waMeLink } from "@/lib/messageTemplates";
+import { bookingLink, buildCancellationMessage, buildConfirmationMessage, buildRecallMessage, waMeLink } from "@/lib/messageTemplates";
 import { useCopyToClipboard } from "@/composables/useCopyToClipboard";
 import Badge from "@/components/ui/Badge.vue";
 import Button from "@/components/ui/Button.vue";
@@ -108,7 +108,8 @@ const confirmationItems = computed<MessageItem[]>(() =>
       servicioNombre,
       doctorNombre: catalog.doctorName(a.doctor),
       fechaTexto: formatDay(inicio),
-      horaTexto: formatTime(inicio),
+      horaTexto: formatTime12h(inicio),
+      telefonoContacto: clinica.activeClinic?.telefono_contacto ?? "",
     });
     return {
       key: `conf:${a.id}`,
@@ -169,7 +170,9 @@ const cancellationItems = computed<MessageItem[]>(() =>
       servicioNombre,
       doctorNombre: catalog.doctorName(a.doctor),
       fechaTexto: formatDay(inicio),
-      horaTexto: formatTime(inicio),
+      horaTexto: formatTime12h(inicio),
+      telefonoContacto: clinica.activeClinic?.telefono_contacto ?? "",
+      enlaceAgendar: bookingLink(clinica.activeClinicId ?? ""),
     });
     return {
       key: `cancel:${a.id}`,

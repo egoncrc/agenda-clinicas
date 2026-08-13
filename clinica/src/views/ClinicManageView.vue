@@ -49,6 +49,7 @@ const datos = ref({
   ycloudApiKey: "",
   ycloudWebhookSecret: "",
   bookingPublicLinkToken: "",
+  telefonoContacto: "",
   activo: true,
 });
 const savingDatos = ref(false);
@@ -63,6 +64,7 @@ function fillDatos(row: ClinicRow): void {
     ycloudApiKey: row.ycloud_api_key ?? "",
     ycloudWebhookSecret: row.ycloud_webhook_secret ?? "",
     bookingPublicLinkToken: row.booking_public_link_token ?? "",
+    telefonoContacto: row.telefono_contacto ?? "",
     activo: row.activo,
   };
 }
@@ -147,6 +149,7 @@ async function saveDatos(): Promise<void> {
         ycloud_api_key: datos.value.ycloudApiKey.trim() || null,
         ycloud_webhook_secret: datos.value.ycloudWebhookSecret.trim() || null,
         booking_public_link_token: datos.value.bookingPublicLinkToken.trim() || null,
+        telefono_contacto: datos.value.telefonoContacto.trim() || null,
         activo: datos.value.activo,
       }),
     );
@@ -225,6 +228,10 @@ async function goToHorario(): Promise<void> {
           <div>
             <label :class="LABEL">Token del link público de agendar</label>
             <input v-model="datos.bookingPublicLinkToken" :class="INPUT" placeholder="Vacío = usa el global" />
+          </div>
+          <div>
+            <label :class="LABEL">Teléfono de contacto (visible al paciente)</label>
+            <input v-model="datos.telefonoContacto" :class="INPUT" placeholder="2222-3344" />
           </div>
           <label class="flex items-center gap-2 text-sm text-slate-700">
             <input v-model="datos.activo" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-brand-700 focus:ring-brand-500/30" />
