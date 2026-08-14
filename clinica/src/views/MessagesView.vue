@@ -172,7 +172,7 @@ const cancellationItems = computed<MessageItem[]>(() =>
       fechaTexto: formatDay(inicio),
       horaTexto: formatTime12h(inicio),
       telefonoContacto: clinica.activeClinic?.telefono_contacto ?? "",
-      enlaceAgendar: bookingLink(clinica.activeClinicId ?? ""),
+      enlaceAgendar: bookingLink(clinica.activeClinic),
     });
     return {
       key: `cancel:${a.id}`,

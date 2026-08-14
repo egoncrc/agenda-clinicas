@@ -39,6 +39,8 @@ DIRECTUS_ADMIN_TOKEN=<admin_token> npm run provision:doctor-clinics -- --dry-run
 
 Three more provisioning scripts have no `package.json` alias and are run with `npx tsx`: `scripts/provision-clinics.ts` (multi-tenant schema), `scripts/provision-clinic-permissions.ts` (per-clinic policy filters) and `scripts/provision-cancellation-fields.ts` (los tres campos de trazabilidad de la cancelación en `appointments`). Full order on a fresh instance: `provision` → `provision-clinics.ts` → `provision-doctor-clinics.ts` → `provision-cancellation-fields.ts` → `provision-clinic-permissions.ts` → `seed`.
 
+`scripts/shorten-booking-links.ts` is run the same way but isn't provisioning: it calls Short.io (`SHORTIO_API_KEY`, `SHORTIO_DOMAIN`, optional `PANEL_BASE_URL`) to shorten each clinic's `.../agendar?clinica=<uuid>` and stores the result in `clinics.booking_short_url`, which is what the panel's Mensajes screen pastes into the cancellation text ("Agende su cita aquí: …"). Supports `--dry-run` and `--force`. **A clinic that already has a link is skipped on purpose** — regenerating it would break the links already sitting in patients' phones. The key lives in a hand-run script rather than the panel because it can rewrite the destination of a link already sent to patients, and the panel bundle is public (any `VITE_*` is readable in devtools).
+
 Directus extensions (each one a separate install/build — `appointments-overlap-guard`, `waitlist-notify-hook`, `time-off-cascade-hook`, `force-password-change-hook`, `appointment-cancel-stamp-hook`, `working-hours-guard`):
 ```bash
 cd directus-extensions/<extension>

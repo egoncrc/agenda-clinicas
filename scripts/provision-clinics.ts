@@ -216,6 +216,16 @@ async function main() {
       meta: { interface: "input", note: "Teléfono de contacto visible al paciente en los mensajes (distinto de whatsapp_numero, que es el número de envío de la API)." },
       schema: {},
     },
+    {
+      field: "booking_short_url",
+      type: "string",
+      meta: {
+        interface: "input",
+        readonly: true,
+        note: "Link corto de Short.io hacia el formulario público de agendar. Lo genera scripts/shorten-booking-links.ts; vacío = se usa el link largo con el id.",
+      },
+      schema: {},
+    },
   ]);
 
   // ---- Campo M2O clinic en cada colección que se aísla por clínica ----

@@ -15,6 +15,8 @@ export interface ClinicRow {
   ycloud_webhook_secret?: string | null;
   booking_public_link_token?: string | null;
   telefono_contacto?: string | null;
+  /** Link corto de Short.io al formulario público de agendar — lo genera scripts/shorten-booking-links.ts. */
+  booking_short_url?: string | null;
 }
 
 export interface SpecialtyRow {
