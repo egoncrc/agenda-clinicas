@@ -44,7 +44,7 @@ describe("buildCancellationMessage", () => {
     fechaTexto: "lunes 10 de agosto",
     horaTexto: "09:00 AM",
     telefonoContacto: "2222-3344",
-    enlaceAgendar: "https://panel.egonia.site/agendar?clinica=abc123",
+    enlaceAgendar: "https://citas.short.gy/central",
   };
 
   it("incluye el motivo, servicio, doctor, fecha y hora", () => {
@@ -55,8 +55,17 @@ describe("buildCancellationMessage", () => {
 
   it("incluye el enlace de agendar y el teléfono de contacto", () => {
     const mensaje = buildCancellationMessage(base);
-    expect(mensaje).toContain("https://panel.egonia.site/agendar?clinica=abc123");
+    expect(mensaje).toContain("Agende su cita aquí: https://citas.short.gy/central");
     expect(mensaje).toContain("teléfono 2222-3344");
+  });
+
+  it("deja el enlace solo en su línea y sin puntuación detrás", () => {
+    // WhatsApp autoenlaza la URL tal cual: un punto final quedaría dentro del
+    // enlace y lo rompería.
+    const linea = buildCancellationMessage(base)
+      .split("\n")
+      .find((l) => l.includes("short.gy"));
+    expect(linea).toBe("Agende su cita aquí: https://citas.short.gy/central");
   });
 });
 
@@ -74,7 +83,20 @@ describe("buildRecallMessage", () => {
 });
 
 describe("bookingLink", () => {
-  it("arma la URL con el id de la clínica", () => {
-    expect(bookingLink("abc123")).toBe("https://panel.egonia.site/agendar?clinica=abc123");
+  it("prefiere el link corto de Short.io cuando la clínica lo tiene", () => {
+    expect(bookingLink({ id: "abc123", booking_short_url: "https://citas.short.gy/central" })).toBe(
+      "https://citas.short.gy/central",
+    );
+  });
+
+  it("cae a la URL larga con el id si no hay link corto", () => {
+    expect(bookingLink({ id: "abc123" })).toBe("https://panel.egonia.site/agendar?clinica=abc123");
+    expect(bookingLink({ id: "abc123", booking_short_url: "  " })).toBe(
+      "https://panel.egonia.site/agendar?clinica=abc123",
+    );
+  });
+
+  it("no revienta sin clínica activa", () => {
+    expect(bookingLink(null)).toBe("https://panel.egonia.site/agendar?clinica=");
   });
 });

@@ -197,6 +197,8 @@ Tres pestañas:
 - **Seguimiento** — pacientes a los que se les está cumpliendo el plazo desde su última cita completada de un servicio con periodicidad.
 - **Cancelaciones** — citas que se cancelaron solas al registrar una ausencia del médico (`cancelada_por_ausencia`), de los últimos `CANCELLATION_LOOKBACK_DAYS` (7) días en adelante. No incluye las que la recepción canceló de común acuerdo con el paciente: esas ya están habladas.
 
+**El enlace de agendar del mensaje de cancelación.** El texto cierra con una línea `Agende su cita aquí: <link>`, sola y sin puntuación detrás: WhatsApp no admite hipervínculos con texto propio (solo negrita/cursiva/tachado/mono, las URLs se autoenlazan tal cual) y un punto final quedaría dentro del enlace. El link sale de `clinics.booking_short_url`, un link corto de Short.io que genera **una sola vez por clínica** `scripts/shorten-booking-links.ts` (la API key de Short.io permite reescribir el destino de links ya enviados a pacientes, así que no puede vivir en el bundle público del panel). Si el campo está vacío, `bookingLink()` cae al link largo de siempre — no hace falta tener Short.io configurado para que la pantalla funcione. El campo se ve, de solo lectura, en `/admin/clinicas/:id`.
+
 Al pulsar *Enviado* se crea una fila en `messages` (`direccion: "out"`) con el texto exacto y luego se marca el flag en la cita. Ese orden es deliberado: si el registro falla, el flag no se pone y el ítem sigue en la lista en vez de desaparecer sin dejar rastro. La casilla *Ver también los ya enviados* permite deshacer un clic accidental.
 
 **Campos de Directus que usa** (creados por `scripts/provision-directus.ts`):
@@ -208,6 +210,7 @@ Al pulsar *Enviado* se crea una fila en `messages` (`direccion: "out"`) con el t
 | `appointments.recall_mensaje_enviado` | Ya se envió el seguimiento derivado de esa cita completada. |
 | `appointments.cancelada_por_ausencia` | La cita se canceló por una ausencia del médico (lo marcan el panel y el hook `time-off-cascade-hook`). |
 | `appointments.cancelacion_mensaje_enviado` | Ya se avisó al paciente de esa cancelación. |
+| `clinics.booking_short_url` | Link corto de Short.io al formulario público de agendar (`scripts/shorten-booking-links.ts`). Vacío = se usa el link largo con el uuid. |
 
 El flag de seguimiento vive en la **cita completada de origen**, no en el paciente: así el ciclo se re-arma solo cuando el paciente vuelve y esa nueva cita se marca `completada`.
 

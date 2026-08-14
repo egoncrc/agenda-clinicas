@@ -21,6 +21,10 @@ export interface ClinicRow {
   ycloud_api_key?: string | null;
   ycloud_webhook_secret?: string | null;
   booking_public_link_token?: string | null;
+  /** Teléfono visible al paciente en los mensajes (distinto de whatsapp_numero, el número de envío). */
+  telefono_contacto?: string | null;
+  /** Link corto de Short.io al formulario público de agendar — ver scripts/shorten-booking-links.ts. */
+  booking_short_url?: string | null;
 }
 
 /** Especialidad médica (ej. Odontología, Cardiología). Acota médicos y servicios. */

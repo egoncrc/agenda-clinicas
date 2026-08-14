@@ -233,6 +233,24 @@ async function goToHorario(): Promise<void> {
             <label :class="LABEL">Teléfono de contacto (visible al paciente)</label>
             <input v-model="datos.telefonoContacto" :class="INPUT" placeholder="2222-3344" />
           </div>
+          <div>
+            <!--
+              Solo lectura a propósito: el link vive en Short.io y editarlo acá no
+              cambiaría el destino de la redirección, solo dejaría al panel
+              enviando a los pacientes un link que no existe.
+            -->
+            <label :class="LABEL">Link corto de agendar</label>
+            <input
+              :value="clinic?.booking_short_url ?? ''"
+              :class="[INPUT, 'bg-slate-50 text-slate-500']"
+              readonly
+              placeholder="Vacío = se usa el link largo con el id"
+            />
+            <p class="mt-1 text-xs text-slate-500">
+              Lo genera <code>scripts/shorten-booking-links.ts</code> con Short.io. Es el enlace que la pantalla
+              Mensajes pega en los avisos de cancelación.
+            </p>
+          </div>
           <label class="flex items-center gap-2 text-sm text-slate-700">
             <input v-model="datos.activo" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-brand-700 focus:ring-brand-500/30" />
             Activa

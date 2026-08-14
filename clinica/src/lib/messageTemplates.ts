@@ -95,6 +95,16 @@ export interface CancellationMessageInput {
 }
 
 /**
+ * El enlace va SOLO en su línea, precedido de la etiqueta y sin puntuación
+ * detrás. WhatsApp no admite hipervínculos con texto propio (solo negrita /
+ * cursiva / tachado / mono; las URLs se autoenlazan tal cual), así que esto es
+ * lo más cerca que se puede estar de un "Agende su cita aquí" pulsable sin una
+ * plantilla HSM con botón. Un punto final quedaría DENTRO del enlace y lo
+ * rompería, y los asteriscos de negrita se ven literales al pegar en SMS.
+ */
+const ETIQUETA_ENLACE = "Agende su cita aquí:";
+
+/**
  * Aviso de que la cita se canceló porque el médico dejó de atender ese horario:
  * una ausencia registrada sobre esa fecha o un cambio en su horario laboral. La
  * fórmula cubre las dos causas a propósito — al paciente le da igual cuál fue, y
@@ -110,7 +120,9 @@ export function buildCancellationMessage(i: CancellationMessageInput): string {
     "",
     `Queremos informarle que debido a una situación imprevista presentada al ${i.doctorNombre} debemos cancelar su cita de ${i.servicioNombre} del ${i.fechaTexto} a las ${i.horaTexto}.`,
     "",
-    `Le ofrecemos disculpas por el inconveniente y con gusto podemos reagendar la cita si nos indica su horario de preferencia o puede verificar el horario más conveniente para usted en el siguiente enlace: ${i.enlaceAgendar}`,
+    `Le ofrecemos disculpas por el inconveniente. Con gusto podemos reagendar la cita si nos indica su horario de preferencia, o puede elegir usted mismo el espacio que mejor le convenga.`,
+    "",
+    `${ETIQUETA_ENLACE} ${i.enlaceAgendar}`,
     "",
     `También puede comunicarse con nosotros al teléfono ${i.telefonoContacto} y con gusto le colaboramos con una nueva fecha.`,
     "",
@@ -120,9 +132,18 @@ export function buildCancellationMessage(i: CancellationMessageInput): string {
 
 const BOOKING_BASE_URL = "https://panel.egonia.site/agendar";
 
-/** Link público de agendar de una clínica — el token va embebido en el build público, no en la URL (ver PublicBookingView.vue). */
-export function bookingLink(clinicId: string): string {
-  return `${BOOKING_BASE_URL}?clinica=${clinicId}`;
+/**
+ * Link público de agendar de una clínica — el token va embebido en el build
+ * público, no en la URL (ver PublicBookingView.vue).
+ *
+ * Prefiere el link corto de Short.io si la clínica ya lo tiene generado
+ * (`scripts/shorten-booking-links.ts`); si no, cae al largo con el uuid, que es
+ * feo pero funciona. Así el panel no depende de que Short.io esté configurado.
+ */
+export function bookingLink(clinic: { id: string; booking_short_url?: string | null } | null): string {
+  const corto = clinic?.booking_short_url?.trim();
+  if (corto) return corto;
+  return `${BOOKING_BASE_URL}?clinica=${clinic?.id ?? ""}`;
 }
 
 /** Código de país para teléfonos guardados en formato local viejo, sin prefijo. */
