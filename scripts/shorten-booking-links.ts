@@ -45,7 +45,7 @@ if (!DRY_RUN && (!SHORTIO_API_KEY || !SHORTIO_DOMAIN)) {
 }
 
 /** Base del panel; el path `/agendar` es la ruta pública del SPA (clinica/src/router/index.ts). */
-const PANEL_BASE_URL = process.env.PANEL_BASE_URL ?? "https://panel.egonia.site";
+const PANEL_BASE_URL = process.env.PANEL_BASE_URL ?? "https://agendamedicacr.com";
 
 const SHORTIO_API_URL = "https://api.short.io/links";
 
