@@ -53,9 +53,14 @@ async function handleSubmit(): Promise<void> {
     <div class="mx-auto w-full max-w-sm">
       <div class="mb-10 flex items-center gap-3">
         <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-700">
-          <span class="font-display text-sm font-bold text-white">CD</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5 text-white">
+            <rect x="3" y="5" width="18" height="15" rx="2" />
+            <path d="M3 10h18" />
+            <path d="M8 3v4M16 3v4" />
+            <path d="M12 13.5v4M10 15.5h4" />
+          </svg>
         </div>
-        <span class="font-display text-base font-semibold text-brand-800">Clínica</span>
+        <span class="font-display text-base font-semibold text-brand-800">Agenda Médica</span>
       </div>
 
       <h1 class="font-display text-2xl font-bold text-slate-900">Recuperar contraseña</h1>
