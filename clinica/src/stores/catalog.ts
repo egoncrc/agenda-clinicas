@@ -19,6 +19,10 @@ export const useCatalogStore = defineStore("catalog", () => {
     if (loaded.value) return;
     if (loadingPromise) return loadingPromise;
 
+    // La promesa se comparte solo mientras está EN VUELO. Si se dejara puesta
+    // tras un rechazo, ese único fallo (una caída de red, un 401) se serviría en
+    // frío a todas las vistas que llaman a `load()` durante el resto de la
+    // sesión, y solo recargar la página lo arreglaría.
     loadingPromise = (async () => {
       const clinicId = useClinicaStore().activeClinicId ?? undefined;
       const [sp, d, s] = await Promise.all([
@@ -42,7 +46,9 @@ export const useCatalogStore = defineStore("catalog", () => {
       doctors.value = d;
       services.value = s;
       loaded.value = true;
-    })();
+    })().finally(() => {
+      loadingPromise = null;
+    });
 
     return loadingPromise;
   }
