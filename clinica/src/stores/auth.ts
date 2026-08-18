@@ -1,6 +1,6 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
-import { passwordRequest, passwordReset, readItems, readMe } from "@directus/sdk";
+import { isDirectusError, passwordRequest, passwordReset, readItems, readMe } from "@directus/sdk";
 import { directus } from "@/lib/directus";
 import { changePasswordWithVerification } from "@/lib/reauth";
 import { friendlyErrorMessage, loginErrorMessage } from "@/lib/directusErrors";
@@ -172,16 +172,80 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   /**
+   * Espera a que `force-password-change-hook` apague la bandera.
+   *
+   * El hook la apaga en un `action`, que Directus emite DESPUÉS de responder al
+   * `PATCH /users/me` (y encima sin esperar la escritura). Un `readMe` inmediato
+   * puede leerla todavía en `true`, y ese falso positivo es caro: la pantalla de
+   * cambio forzado acusa a la extensión de no estar desplegada y deja al usuario
+   * encerrado, porque su contraseña temporal ya no existe y no puede reintentar.
+   *
+   * Se consulta solo el campo (no `loadUser()` entero, que son tres requests) y
+   * se abandona en silencio tras los reintentos: quien llame decide qué hacer con
+   * una bandera que sigue puesta.
+   */
+  async function waitForFlagCleared(attempts = 3, delayMs = 300): Promise<void> {
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        const row = (await directus.request(
+          readMe({ fields: ["must_change_password" as never] }),
+        )) as unknown as { must_change_password?: boolean | null };
+        if (row.must_change_password !== true) return;
+      } catch {
+        // Si el campo todavía no existe en Directus, pedirlo hace fallar el
+        // readMe entero. Esto es solo una espera cortés: quien decide es el
+        // `loadUser()` de después, que ya trae su propio fallback sin el campo.
+        return;
+      }
+      if (i < attempts - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  /**
+   * Reintenta el login con la contraseña recién escrita.
+   *
+   * Verificado a mano contra la Directus real: justo después de que
+   * `updateMe({password})` responde, un login inmediato con esa contraseña
+   * puede devolver `INVALID_CREDENTIALS` — hay un lag de propagación entre
+   * "el UPDATE respondió" y "el endpoint de login ya ve el hash nuevo"
+   * (~unos cientos de ms). Sin el reintento, ese lag se leía como
+   * `session-lost` y mandaba al usuario a loguearse de nuevo con la
+   * contraseña que él mismo acababa de elegir un instante antes.
+   */
+  async function loginWithRetry(email: string, password: string, attempts = 5, delayMs = 400): Promise<void> {
+    for (let i = 0; i < attempts; i += 1) {
+      try {
+        await directus.login({ email, password }, { mode: "session" });
+        return;
+      } catch (e) {
+        const isLastAttempt = i === attempts - 1;
+        const isInvalidCredentials =
+          isDirectusError(e) && e.errors.some((err) => err.extensions.code === "INVALID_CREDENTIALS");
+        if (isLastAttempt || !isInvalidCredentials) throw e;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+
+  /**
    * Cambia la contraseña del usuario logueado verificando primero la actual.
    *
    * La verificación y la escritura van por un cliente efímero (ver `lib/reauth.ts`),
    * no por la cookie de sesión — así un intento fallido no puede tumbar la
    * sesión abierta, que es justo el requisito.
    *
-   * Lanza `Error("session-lost")` si la contraseña ya se cambió pero la sesión
-   * de cookie no sobrevivió (Directus puede invalidar las demás sesiones al
-   * cambiar la contraseña). La vista lo trata como éxito y manda a `/login`: el
-   * cambio nunca se pierde en silencio.
+   * Cuando el cambio sí ocurre, en cambio, la cookie está condenada: Directus
+   * invalida las sesiones del usuario al cambiar su contraseña, y la única que
+   * sobrevive es la efímera (que `reauth.ts` cierra acto seguido). El borrado
+   * ocurre después de responder, así que un `loadUser()` inmediato todavía
+   * pasaba y el panel aterrizaba en el dashboard con el estado en memoria
+   * cargado pero TODAS las peticiones siguientes en 401 — "pegado" hasta
+   * recargar. Por eso acá se abre una sesión NUEVA con la contraseña nueva, que
+   * es exactamente el estado de un login normal.
+   *
+   * Lanza `Error("session-lost")` si la contraseña ya se cambió pero no se pudo
+   * dejar una sesión utilizable. La vista lo trata como éxito y manda a
+   * `/login`: el cambio nunca se pierde en silencio.
    */
   async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
     const email = user.value?.email;
@@ -194,9 +258,20 @@ export const useAuthStore = defineStore("auth", () => {
     if (user.value) user.value.mustChangePassword = false;
 
     try {
-      // Y la verdad del servidor: el hook ya debería haber apagado la bandera.
+      // Mismo saneo que `login()`: la caché de acá quedó atada a la sesión que
+      // el cambio de contraseña acaba de invalidar.
+      useCatalogStore().reset();
+      useClinicaStore().reset();
+      await loginWithRetry(email, newPassword);
+      // Con sesión nueva y válida: darle al hook su margen antes de creerle a la
+      // bandera, y recién ahí cargar el perfil completo.
+      await waitForFlagCleared();
       await loadUser();
     } catch {
+      // Sin esto el guard del router seguiría viendo `isAuthenticated` y dejaría
+      // navegar sin sesión: justo el estado pegado que este cambio elimina.
+      user.value = null;
+      ownDoctorId.value = null;
       throw new Error("session-lost");
     }
   }

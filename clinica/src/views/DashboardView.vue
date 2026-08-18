@@ -30,9 +30,18 @@ function initialsOf(name: string): string {
 async function load(): Promise<void> {
   loading.value = true;
   error.value = null;
+  // Antes se pasaba con un `!`: sin clínica activa las consultas salían con un
+  // filtro vacío y el fallo se reportaba como "no se pudieron cargar las
+  // estadísticas", que manda a buscar el problema donde no está.
+  const clinicId = clinica.activeClinicId;
+  if (!clinicId) {
+    error.value = "No hay una clínica seleccionada.";
+    loading.value = false;
+    return;
+  }
   try {
     await catalog.load();
-    const result = await fetchDashboardStats(clinica.activeClinicId!);
+    const result = await fetchDashboardStats(clinicId);
     stats.value = result;
 
     const patientIds = [...new Set(result.proximasCitas.map((a) => a.patientId))];
@@ -44,7 +53,11 @@ async function load(): Promise<void> {
         patients.map((p) => [p.id, p.nombre?.trim() || p.telefono]),
       );
     }
-  } catch {
+  } catch (e) {
+    // Este catch tapa tres operaciones distintas (catálogo, estadísticas y
+    // pacientes). Sin el log, un 401 de sesión caída y un 403 de permisos se ven
+    // exactamente igual desde afuera.
+    console.error("[dashboard] No se pudieron cargar las estadísticas:", e);
     error.value = "No se pudieron cargar las estadísticas. Intenta recargar la página.";
   } finally {
     loading.value = false;

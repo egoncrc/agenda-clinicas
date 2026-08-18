@@ -1,4 +1,5 @@
 import { authentication, createDirectus, rest } from "@directus/sdk";
+import { isSessionExpired } from "@/lib/sessionErrors";
 
 /**
  * Esquema de colecciones tal como viven en Directus (espejo reducido de
@@ -233,6 +234,53 @@ if (!DIRECTUS_URL) {
  * para esto, así que la cookie que pone /auth/login viaja automáticamente a
  * las llamadas REST siguientes sin manejar tokens a mano en el navegador.
  */
-export const directus = createDirectus<Schema>(DIRECTUS_URL)
+const client = createDirectus<Schema>(DIRECTUS_URL)
   .with(authentication("session", { credentials: "include" }))
   .with(rest({ credentials: "include" }));
+
+/** Evita que diez peticiones en paralelo (el dashboard lanza siete) disparen diez redirecciones. */
+let handlingExpiredSession = false;
+
+/**
+ * Sin esto, una sesión caída deja el panel PEGADO: Pinia sigue teniendo al
+ * usuario en memoria, el guard del router lo da por autenticado y cada pantalla
+ * muestra su propio mensaje de error sin que nadie diga que hay que volver a
+ * entrar. Pasó de forma sistemática en el primer ingreso (ver
+ * `stores/auth.ts:changePassword`), pero aplica a cualquier expiración.
+ *
+ * Los imports son dinámicos a propósito: el store y el router importan este
+ * archivo, y estáticos serían un ciclo.
+ */
+async function handleExpiredSession(): Promise<void> {
+  if (handlingExpiredSession) return;
+  handlingExpiredSession = true;
+  try {
+    const [{ useAuthStore }, { useCatalogStore }, { useClinicaStore }, { default: router }] =
+      await Promise.all([
+        import("@/stores/auth"),
+        import("@/stores/catalog"),
+        import("@/stores/clinica"),
+        import("@/router"),
+      ]);
+    const auth = useAuthStore();
+    if (!auth.isAuthenticated) return;
+    // Se limpia a mano en vez de `auth.logout()`: la sesión ya no existe, y ese
+    // camino haría otra petición condenada a fallar.
+    auth.user = null;
+    auth.ownDoctorId = null;
+    useCatalogStore().reset();
+    useClinicaStore().reset();
+    await router.push({ name: "login", query: { expirada: "1" } });
+  } finally {
+    handlingExpiredSession = false;
+  }
+}
+
+const rawRequest = client.request.bind(client);
+client.request = ((options) =>
+  rawRequest(options as never).catch((error: unknown) => {
+    if (isSessionExpired(error)) void handleExpiredSession();
+    throw error;
+  })) as typeof client.request;
+
+export const directus = client;

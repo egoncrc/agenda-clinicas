@@ -19,6 +19,9 @@ const showPassword = ref(false);
  */
 const passwordJustChanged = computed(() => route.query.cambiada === "1");
 
+/** Lo pone el guard de 401 de `lib/directus.ts` cuando la sesión murió con el panel abierto. */
+const sessionExpired = computed(() => route.query.expirada === "1");
+
 const currentYear = new Date().getFullYear();
 
 const FEATURES = [
@@ -116,6 +119,13 @@ async function handleSubmit(): Promise<void> {
           class="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800"
         >
           Tu contraseña se cambió. Ingresá con la nueva.
+        </div>
+
+        <div
+          v-if="sessionExpired"
+          class="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800"
+        >
+          Tu sesión expiró. Volvé a ingresar.
         </div>
 
         <form class="mt-8 space-y-5" @submit.prevent="handleSubmit">
