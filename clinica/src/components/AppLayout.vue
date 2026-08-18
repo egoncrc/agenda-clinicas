@@ -41,9 +41,14 @@ async function handleChangeClinic(): Promise<void> {
     <aside class="hidden w-60 flex-none flex-col border-r border-slate-200 bg-white lg:flex">
       <div class="flex items-center gap-2.5 px-5 py-5">
         <div class="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-700">
-          <span class="font-display text-xs font-bold text-white">CD</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5 text-white">
+            <rect x="3" y="5" width="18" height="15" rx="2" />
+            <path d="M3 10h18" />
+            <path d="M8 3v4M16 3v4" />
+            <path d="M12 13.5v4M10 15.5h4" />
+          </svg>
         </div>
-        <span class="font-display text-sm font-semibold text-brand-900">Clínica</span>
+        <span class="font-display text-sm font-semibold text-brand-900">Agenda Médica</span>
       </div>
 
       <AppNav />
@@ -98,9 +103,14 @@ async function handleChangeClinic(): Promise<void> {
       <header class="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 lg:hidden">
         <div class="flex items-center gap-2.5">
           <div class="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-brand-700">
-            <span class="font-display text-xs font-bold text-white">CD</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 text-white">
+              <rect x="3" y="5" width="18" height="15" rx="2" />
+              <path d="M3 10h18" />
+              <path d="M8 3v4M16 3v4" />
+              <path d="M12 13.5v4M10 15.5h4" />
+            </svg>
           </div>
-          <span class="font-display text-sm font-semibold text-brand-900">Clínica</span>
+          <span class="font-display text-sm font-semibold text-brand-900">Agenda Médica</span>
         </div>
         <button
           type="button"
@@ -128,9 +138,14 @@ async function handleChangeClinic(): Promise<void> {
           <aside class="relative z-10 flex h-full w-64 max-w-[80vw] flex-col bg-white shadow-xl">
             <div class="flex items-center gap-2.5 px-5 py-5">
               <div class="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-700">
-                <span class="font-display text-xs font-bold text-white">CD</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5 text-white">
+                  <rect x="3" y="5" width="18" height="15" rx="2" />
+                  <path d="M3 10h18" />
+                  <path d="M8 3v4M16 3v4" />
+                  <path d="M12 13.5v4M10 15.5h4" />
+                </svg>
               </div>
-              <span class="font-display text-sm font-semibold text-brand-900">Clínica</span>
+              <span class="font-display text-sm font-semibold text-brand-900">Agenda Médica</span>
             </div>
 
             <AppNav @navigate="mobileMenuOpen = false" />

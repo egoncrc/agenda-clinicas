@@ -336,7 +336,7 @@ onMounted(loadContext);
 <template>
   <div class="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-8">
     <div class="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-      <h1 class="font-display mb-1 text-2xl font-bold text-brand-800">{{ clinicName || "Clínica" }}</h1>
+      <h1 class="font-display mb-1 text-2xl font-bold text-brand-800">{{ clinicName || "Agenda Médica" }}</h1>
       <p class="mb-6 text-sm text-slate-500">Agenda tu cita sin necesidad de cuenta.</p>
 
       <p v-if="loadingContext" class="text-sm text-slate-500">Cargando…</p>
