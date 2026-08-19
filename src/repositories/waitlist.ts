@@ -11,6 +11,7 @@ import { getService } from "./services.js";
 import { getDoctor } from "./doctors.js";
 import { logMessage } from "./messages.js";
 import { sendTemplate } from "../whatsapp/ycloud.js";
+import { toE164 } from "../domain/phone.js";
 
 const TEMPLATE_NAME = "lista_espera_cita_agendada";
 const TEMPLATE_LANGUAGE = "es";
@@ -143,7 +144,7 @@ async function sendBookedNotification(
     fechaHora.split(", ")[1]!,
   ];
 
-  await sendTemplate(patient.telefono, TEMPLATE_NAME, TEMPLATE_LANGUAGE, bodyParams, clinic);
+  await sendTemplate(toE164(patient.telefono), TEMPLATE_NAME, TEMPLATE_LANGUAGE, bodyParams, clinic);
   await logMessage(
     patient.id,
     "out",

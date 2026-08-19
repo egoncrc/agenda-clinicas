@@ -359,7 +359,7 @@ onMounted(loadContext);
             v-model="telefono"
             type="tel"
             required
-            placeholder="+506..."
+            placeholder="88887777"
             class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
           />
           <p v-if="telefono && !phoneValid" class="mt-1 text-xs text-red-600">

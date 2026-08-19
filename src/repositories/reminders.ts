@@ -3,6 +3,7 @@ import { DateTime } from "luxon";
 import { directus, type AppointmentRow, type ClinicRow } from "../directus.js";
 import { config } from "../config.js";
 import { duesReminders, type ReminderKind } from "../domain/reminders.js";
+import { toE164 } from "../domain/phone.js";
 import { sendTemplate } from "../whatsapp/ycloud.js";
 import { logMessage } from "./messages.js";
 import { getPatient } from "./patients.js";
@@ -81,7 +82,7 @@ export async function sendReminder(clinic: ClinicRow, row: AppointmentRow, kind:
   const nombrePaciente = patient.nombre ?? "paciente";
   const bodyParams = [nombrePaciente, service.nombre, doctor.nombre, fechaHora];
 
-  await sendTemplate(patient.telefono, TEMPLATE_NAME[kind], TEMPLATE_LANGUAGE, bodyParams, clinic);
+  await sendTemplate(toE164(patient.telefono), TEMPLATE_NAME[kind], TEMPLATE_LANGUAGE, bodyParams, clinic);
   await logMessage(patient.id, "out", `[recordatorio ${kind}] ${bodyParams.join(" | ")}`);
   await directus.request(updateItem("appointments", row.id, { [FLAG_FIELD[kind]]: true }));
 }
