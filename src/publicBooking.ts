@@ -9,6 +9,7 @@ import { listActiveDoctors } from "./repositories/doctors.js";
 import { listActiveServices } from "./repositories/services.js";
 import { listActiveSpecialties } from "./repositories/specialties.js";
 import { getAvailableSlots } from "./repositories/availability.js";
+import { toLocalPhone } from "./domain/phone.js";
 import { bookAppointment, PatientScheduleConflictError, SlotUnavailableError } from "./repositories/appointments.js";
 import {
   createDependentPatient,
@@ -24,7 +25,12 @@ declare module "express-serve-static-core" {
   }
 }
 
-/** Formato laxo tipo E.164: opcional "+" seguido de 7 a 15 dígitos. */
+/**
+ * Formato laxo de entrada: opcional "+" seguido de 7 a 15 dígitos. Acepta
+ * tanto el local de 8 dígitos (formato en que se guarda `patients.telefono`)
+ * como un E.164 con +506 por si alguien lo pega así; se normaliza a local
+ * con `toLocalPhone` antes de tocar la base.
+ */
 const PHONE_RE = /^\+?\d{7,15}$/;
 
 /** El formulario público ofrece horas cada 30' (más cómodo para elegir a mano), aunque el paso "real" del bot (SLOT_STEP_MINUTES) sea cada 15'. */
@@ -197,7 +203,7 @@ publicBookingRouter.get(
       res.status(400).json({ error: "Número de teléfono inválido." });
       return;
     }
-    const group = await listPatientsByPhone(telefono.trim(), req.clinic!.id);
+    const group = await listPatientsByPhone(toLocalPhone(telefono.trim()), req.clinic!.id);
     res.json({
       patients: group.map((p) => ({ id: p.id, nombre: p.nombre?.trim() || null, titular: Boolean(p.titular) })),
     });
@@ -240,11 +246,11 @@ publicBookingRouter.post(
       return;
     }
 
-    const telefonoTrim = telefono.trim();
-    if (!PHONE_RE.test(telefonoTrim)) {
+    if (!PHONE_RE.test(telefono.trim())) {
       res.status(400).json({ error: "Ingresa un número de teléfono válido." });
       return;
     }
+    const telefonoTrim = toLocalPhone(telefono.trim());
 
     const inicioDate = new Date(inicio);
     if (Number.isNaN(inicioDate.getTime())) {

@@ -7,6 +7,7 @@ import { verifyYCloudSignature } from "./whatsapp/signature.js";
 import { sendText } from "./whatsapp/ycloud.js";
 import type { YCloudInboundEvent } from "./whatsapp/types.js";
 import type { ClinicRow, MessageRow } from "./directus.js";
+import { toE164, toLocalPhone } from "./domain/phone.js";
 import { findOrCreatePatient, listPatientsByPhone } from "./repositories/patients.js";
 import { getRecentMessages, logMessage } from "./repositories/messages.js";
 import { getClinicByWhatsappNumber, getDefaultClinic, listActiveClinics } from "./repositories/clinics.js";
@@ -143,21 +144,24 @@ export async function processInboundEvent(event: YCloudInboundEvent, clinic?: Cl
     return;
   }
 
+  // `msg.from` llega en E.164; `patients.telefono` se guarda en formato local (sin +506).
+  const telefonoLocal = toLocalPhone(msg.from);
+
   // El titular es el dueño del número: identidad conversacional y dueño del historial.
-  const titular = await findOrCreatePatient(msg.from, resolvedClinic.id);
+  const titular = await findOrCreatePatient(telefonoLocal, resolvedClinic.id);
   await logMessage(titular.id, "in", msg.text.body, msg.id);
 
   const history = await getRecentMessages(titular.id, HISTORY_SIZE);
   const conversation = toConversation(history);
 
   // Grupo del número (titular + familiares) para que el agente pueda gestionar sus citas.
-  const household = await listPatientsByPhone(msg.from, resolvedClinic.id);
+  const household = await listPatientsByPhone(telefonoLocal, resolvedClinic.id);
   const reply = await runAgentTurn(
     conversation,
-    { telefono: msg.from, titularId: titular.id, clinic: resolvedClinic },
+    { telefono: telefonoLocal, titularId: titular.id, clinic: resolvedClinic },
     household,
   );
-  await sendText(msg.from, reply, resolvedClinic);
+  await sendText(toE164(telefonoLocal), reply, resolvedClinic);
   await logMessage(titular.id, "out", reply);
 }
 

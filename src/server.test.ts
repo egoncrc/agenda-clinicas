@@ -225,11 +225,11 @@ describe("processInboundEvent (pipeline completo)", () => {
   it("crea/encuentra al paciente, loguea, invoca al agente y envía la respuesta", async () => {
     await processInboundEvent(event);
 
-    expect(findOrCreatePatientMock).toHaveBeenCalledWith("+50688000001", CLINIC.id);
+    expect(findOrCreatePatientMock).toHaveBeenCalledWith("88000001", CLINIC.id);
     expect(logMessageMock).toHaveBeenNthCalledWith(1, "patient-1", "in", "Hola, quiero agendar", "wamid-1");
     expect(runAgentTurnMock).toHaveBeenCalledWith(
       expect.any(Array),
-      { telefono: "+50688000001", titularId: "patient-1", clinic: CLINIC },
+      { telefono: "88000001", titularId: "patient-1", clinic: CLINIC },
       [PATIENT],
     );
     expect(sendTextMock).toHaveBeenCalledWith("+50688000001", "Respuesta del agente", CLINIC);

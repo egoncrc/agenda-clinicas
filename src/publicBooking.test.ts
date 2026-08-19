@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const TOKEN = "test-static-token";
 const TEL = "+50688000001";
+/** Formato local (sin +506) en que queda guardado `patients.telefono` una vez normalizado. */
+const TEL_LOCAL = "88000001";
 const CLINIC_ID = "clinic-1";
 
 vi.mock("./config.js", () => ({
@@ -80,7 +82,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       },
     ]);
     bookAppointmentMock.mockReset();
-    findOrCreatePatientMock.mockReset().mockResolvedValue({ id: "patient-1", telefono: TEL });
+    findOrCreatePatientMock.mockReset().mockResolvedValue({ id: "patient-1", telefono: TEL_LOCAL });
     listPatientsByPhoneMock.mockReset().mockResolvedValue([]);
     getPatientMock.mockReset();
     createDependentPatientMock.mockReset();
@@ -170,8 +172,8 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
   describe("GET /household", () => {
     it("devuelve a todas las personas registradas bajo ese número, titular y familiares", async () => {
       listPatientsByPhoneMock.mockResolvedValue([
-        { id: "patient-1", telefono: TEL, nombre: "María", titular: true },
-        { id: "patient-2", telefono: TEL, nombre: "Juan", titular: false },
+        { id: "patient-1", telefono: TEL_LOCAL, nombre: "María", titular: true },
+        { id: "patient-2", telefono: TEL_LOCAL, nombre: "Juan", titular: false },
       ]);
 
       const res = await fetch(`${baseUrl}/public/booking/household?token=${TOKEN}&clinica=${CLINIC_ID}&telefono=${encodeURIComponent(TEL)}`);
@@ -182,7 +184,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
           { id: "patient-2", nombre: "Juan", titular: false },
         ],
       });
-      expect(listPatientsByPhoneMock).toHaveBeenCalledWith(TEL, CLINIC_ID);
+      expect(listPatientsByPhoneMock).toHaveBeenCalledWith(TEL_LOCAL, CLINIC_ID);
     });
 
     it("devuelve lista vacía si el número no tiene a nadie todavía (no crea nada)", async () => {
@@ -194,7 +196,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
     });
 
     it("una persona sin nombre aparece con nombre null, no se filtra", async () => {
-      listPatientsByPhoneMock.mockResolvedValue([{ id: "patient-1", telefono: TEL, titular: true }]);
+      listPatientsByPhoneMock.mockResolvedValue([{ id: "patient-1", telefono: TEL_LOCAL, titular: true }]);
 
       const res = await fetch(`${baseUrl}/public/booking/household?token=${TOKEN}&clinica=${CLINIC_ID}&telefono=${encodeURIComponent(TEL)}`);
       expect(await res.json()).toEqual({ patients: [{ id: "patient-1", nombre: null, titular: true }] });
@@ -231,7 +233,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
         body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, nombre: "Juan Pérez", ...APPOINTMENT_BODY }),
       });
       expect(res.status).toBe(201);
-      expect(findOrCreatePatientMock).toHaveBeenCalledWith(TEL, CLINIC_ID);
+      expect(findOrCreatePatientMock).toHaveBeenCalledWith(TEL_LOCAL, CLINIC_ID);
       expect(updatePatientNameMock).toHaveBeenCalledWith("patient-1", "Juan Pérez");
       expect(bookAppointmentMock).toHaveBeenCalledWith({
         clinicId: CLINIC_ID,
@@ -254,24 +256,24 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
     });
 
     it("no actualiza el nombre del titular si ya tenía uno", async () => {
-      findOrCreatePatientMock.mockResolvedValue({ id: "patient-1", telefono: TEL, nombre: "Juan Pérez" });
+      findOrCreatePatientMock.mockResolvedValue({ id: "patient-1", telefono: TEL_LOCAL, nombre: "Juan Pérez" });
       bookAppointmentMock.mockResolvedValue(CREATED_ROW);
       await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, nombre: "Juan Pérez", ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL_LOCAL, nombre: "Juan Pérez", ...APPOINTMENT_BODY }),
       });
       expect(updatePatientNameMock).not.toHaveBeenCalled();
     });
 
     it("con patientId agenda para la persona ya elegida de GET /household, sin crear ni renombrar a nadie", async () => {
-      getPatientMock.mockResolvedValue({ id: "patient-hijo", telefono: TEL, nombre: "Juan", titular: false, clinic: CLINIC_ID });
+      getPatientMock.mockResolvedValue({ id: "patient-hijo", telefono: TEL_LOCAL, nombre: "Juan", titular: false, clinic: CLINIC_ID });
       bookAppointmentMock.mockResolvedValue(CREATED_ROW);
 
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, patientId: "patient-hijo", ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL_LOCAL, patientId: "patient-hijo", ...APPOINTMENT_BODY }),
       });
 
       expect(res.status).toBe(201);
@@ -287,7 +289,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, patientId: "patient-otro", ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL_LOCAL, patientId: "patient-otro", ...APPOINTMENT_BODY }),
       });
 
       expect(res.status).toBe(400);
@@ -295,17 +297,17 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
     });
 
     it("con pacienteNombre (número con gente ya registrada) crea un familiar nuevo y agenda para él", async () => {
-      createDependentPatientMock.mockResolvedValue({ id: "patient-hijo2", telefono: TEL, nombre: "Pedro", titular: false });
+      createDependentPatientMock.mockResolvedValue({ id: "patient-hijo2", telefono: TEL_LOCAL, nombre: "Pedro", titular: false });
       bookAppointmentMock.mockResolvedValue(CREATED_ROW);
 
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, pacienteNombre: "Pedro", ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL_LOCAL, pacienteNombre: "Pedro", ...APPOINTMENT_BODY }),
       });
 
       expect(res.status).toBe(201);
-      expect(createDependentPatientMock).toHaveBeenCalledWith(TEL, "Pedro", CLINIC_ID);
+      expect(createDependentPatientMock).toHaveBeenCalledWith(TEL_LOCAL, "Pedro", CLINIC_ID);
       expect(findOrCreatePatientMock).not.toHaveBeenCalled();
       expect(bookAppointmentMock).toHaveBeenCalledWith(expect.objectContaining({ patientId: "patient-hijo2" }));
     });
@@ -315,7 +317,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, nombre: "Juan", ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL_LOCAL, nombre: "Juan", ...APPOINTMENT_BODY }),
       });
       expect(res.status).toBe(409);
     });
@@ -325,7 +327,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, nombre: "Juan", ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL_LOCAL, nombre: "Juan", ...APPOINTMENT_BODY }),
       });
       expect(res.status).toBe(409);
       expect(await res.json()).toEqual({ error: "Ya tienes otra cita en ese horario en esta misma clínica." });
@@ -335,7 +337,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL, ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL_LOCAL, ...APPOINTMENT_BODY }),
       });
       expect(res.status).toBe(400);
       expect(bookAppointmentMock).not.toHaveBeenCalled();
@@ -345,7 +347,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL }),
+        body: JSON.stringify({ token: TOKEN, clinica: CLINIC_ID, telefono: TEL_LOCAL }),
       });
       expect(res.status).toBe(400);
       expect(bookAppointmentMock).not.toHaveBeenCalled();
@@ -355,7 +357,7 @@ describe("publicBookingRouter (HTTP, token estático)", () => {
       const res = await fetch(`${baseUrl}/public/booking/appointments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: "malo", clinica: CLINIC_ID, telefono: TEL, ...APPOINTMENT_BODY }),
+        body: JSON.stringify({ token: "malo", clinica: CLINIC_ID, telefono: TEL_LOCAL, ...APPOINTMENT_BODY }),
       });
       expect(res.status).toBe(401);
       expect(bookAppointmentMock).not.toHaveBeenCalled();
