@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { readItems, updateItem } from "@directus/sdk";
 import { DateTime } from "luxon";
 import { directus } from "@/lib/directus";
-import type { AppointmentRow, PatientRow } from "@/lib/directus";
+import type { AppointmentRow, AppointmentStatus, PatientRow } from "@/lib/directus";
 import { useAuthStore } from "@/stores/auth";
 import { useCatalogStore } from "@/stores/catalog";
 import { useClinicaStore } from "@/stores/clinica";
@@ -11,18 +11,16 @@ import { CLINIC_TIMEZONE, formatDay, formatTime, formatTime12h } from "@/lib/dat
 import { buildConfirmationMessage, waMeLink } from "@/lib/messageTemplates";
 import { dateRangeFilter } from "@/lib/queryHelpers";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
-import { ESTADO_LABELS, ESTADO_TONE } from "@/lib/appointmentStatus";
-import { useConfirm } from "@/composables/useConfirm";
+import { cancelledByRole, ESTADO_LABELS, ESTADO_TONE, TONE_CONTROL_CLASSES } from "@/lib/appointmentStatus";
 import AppointmentFormModal from "@/components/AppointmentFormModal.vue";
+import CancelAppointmentModal from "@/components/CancelAppointmentModal.vue";
 import Button from "@/components/ui/Button.vue";
-import Badge from "@/components/ui/Badge.vue";
 import EmptyState from "@/components/ui/EmptyState.vue";
 import ActionIcon from "@/components/ui/ActionIcon.vue";
 
 const auth = useAuthStore();
 const catalog = useCatalogStore();
 const clinica = useClinicaStore();
-const confirm = useConfirm();
 
 const dateFilter = ref(DateTime.now().setZone(CLINIC_TIMEZONE).toFormat("yyyy-LL-dd"));
 const doctorFilter = ref("");
@@ -155,8 +153,8 @@ async function load(opts: { silent?: boolean } = {}): Promise<void> {
 /**
  * Citas creadas desde /agendar (público) o por el bot de WhatsApp llegan a
  * Directus por fuera del panel, así que no hay evento local que las anuncie:
- * se refrescan solas por polling silencioso. Pausado mientras el modal está
- * abierto para no pisar una edición en curso.
+ * se refrescan solas por polling silencioso. Pausado mientras hay una edición
+ * en curso (modal abierto o cambio de estado guardándose) para no pisarla.
  */
 const POLL_INTERVAL_MS = 15_000;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -173,7 +171,10 @@ onMounted(async () => {
   }
 
   pollTimer = setInterval(() => {
-    if (!showModal.value) void load({ silent: true });
+    // Pausado con cualquier modal abierto o con un cambio de estado en vuelo:
+    // recargar en ese momento pisaría lo que el usuario está haciendo.
+    if (showModal.value || cancelling.value || savingEstadoId.value) return;
+    void load({ silent: true });
   }, POLL_INTERVAL_MS);
 });
 
@@ -196,19 +197,79 @@ async function handleSaved(): Promise<void> {
   await load({ silent: true });
 }
 
-async function quickCancel(appointment: AppointmentRow): Promise<void> {
-  const ok = await confirm({
-    title: "Cancelar esta cita",
-    message: "La cita quedará marcada como cancelada. Esta acción no se puede deshacer.",
-    confirmLabel: "Cancelar cita",
-  });
-  if (!ok) return;
+/**
+ * Cambio de estado en línea, sin abrir el formulario de edición: es lo único
+ * que se necesita para marcar una cita como completada o "no se presentó"
+ * después de atenderla.
+ *
+ * `null` = ninguna en curso. Mientras hay una guardándose se deshabilita ese
+ * selector y se pausa el polling, para que un refresco no pise el cambio.
+ */
+const savingEstadoId = ref<string | null>(null);
+/** Cita a la que se le está pidiendo el motivo de cancelación (ver `CancelAppointmentModal`). */
+const cancelling = ref<AppointmentRow | null>(null);
+
+/**
+ * Escribe solo `estado` (y, al cancelar, su trazabilidad). A diferencia del
+ * formulario de edición NO reenvía `inicio`/`fin`/`doctor`/`service`: cambiar el
+ * estado de una cita ya pasada no debería poder fallar por disponibilidad.
+ *
+ * Directus revalida igual los solapes aunque el payload venga parcial
+ * (`appointments-overlap-guard` completa los campos que faltan desde la fila
+ * actual), así que reactivar una cita cancelada sobre un hueco ya ocupado
+ * devuelve 403 y acá se muestra el mensaje.
+ */
+async function applyEstado(appointment: AppointmentRow, estado: AppointmentStatus, motivo: string | null): Promise<void> {
+  error.value = null;
+  savingEstadoId.value = appointment.id;
   try {
-    await directus.request(updateItem("appointments", appointment.id, { estado: "cancelada" }));
-    await load({ silent: true });
+    await directus.request(
+      updateItem("appointments", appointment.id, {
+        estado,
+        // Solo al pasar a cancelada y solo la primera vez: reestampar la fecha en
+        // cada guardado posterior arruinaría la anticipación del reporte de
+        // Cancelaciones. Misma condición que en AppointmentFormModal.
+        ...(estado === "cancelada" && appointment.estado !== "cancelada"
+          ? {
+              cancelado_en: new Date().toISOString(),
+              cancelado_por: cancelledByRole(auth),
+              motivo_cancelacion: motivo,
+            }
+          : {}),
+      }),
+    );
   } catch (e) {
-    error.value = friendlyErrorMessage(e, "No se pudo cancelar la cita.");
+    error.value = friendlyErrorMessage(e, "No se pudo cambiar el estado de la cita.");
+  } finally {
+    savingEstadoId.value = null;
+    // Siempre, también tras un error: devuelve el selector al valor real que
+    // quedó en el servidor en vez de dejarlo mostrando el que no se guardó.
+    await load({ silent: true });
   }
+}
+
+function onEstadoChange(appointment: AppointmentRow, event: Event): void {
+  const select = event.target as HTMLSelectElement;
+  const nuevo = select.value as AppointmentStatus;
+  if (nuevo === appointment.estado) return;
+
+  // Cancelar es lo único destructivo del selector: se confirma y se aprovecha
+  // para pedir el motivo. El resto se guarda directo.
+  if (nuevo === "cancelada") {
+    // El selector vuelve a lo que había hasta que la cancelación se confirme;
+    // si el usuario se arrepiente no queda mostrando un estado que no se guardó.
+    select.value = appointment.estado;
+    cancelling.value = appointment;
+    return;
+  }
+  void applyEstado(appointment, nuevo, null);
+}
+
+async function confirmCancel(motivo: string | null): Promise<void> {
+  const appointment = cancelling.value;
+  if (!appointment) return;
+  await applyEstado(appointment, "cancelada", motivo);
+  cancelling.value = null;
 }
 </script>
 
@@ -270,8 +331,46 @@ async function quickCancel(appointment: AppointmentRow): Promise<void> {
               <td class="px-4 py-2.5 text-slate-600">{{ especialidadName(a) }}</td>
               <td class="px-4 py-2.5 text-slate-600">{{ catalog.serviceName(a.service) }}</td>
               <td class="px-4 py-2.5 text-slate-600">{{ catalog.doctorName(a.doctor) }}</td>
+              <!-- Selector, no insignia: cambiar el estado es la acción más
+                   frecuente de esta pantalla y no debería obligar a abrir el
+                   formulario de edición. `<select>` nativo a propósito — en el
+                   celular abre el selector del sistema. -->
               <td class="px-4 py-2.5">
-                <Badge :tone="ESTADO_TONE[a.estado]">{{ ESTADO_LABELS[a.estado] }}</Badge>
+                <span
+                  class="relative inline-flex items-center rounded-full"
+                  :class="TONE_CONTROL_CLASSES[ESTADO_TONE[a.estado]]"
+                >
+                  <select
+                    :value="a.estado"
+                    :disabled="savingEstadoId === a.id"
+                    class="cursor-pointer appearance-none rounded-full border-0 bg-transparent py-1 pl-2.5 pr-7 text-xs font-medium text-inherit transition focus:outline-none focus:ring-2 focus:ring-brand-500/40 disabled:cursor-wait disabled:opacity-60"
+                    aria-label="Estado de la cita"
+                    @change="onEstadoChange(a, $event)"
+                  >
+                    <!-- `text-slate-700`: el desplegable lo pinta el sistema sobre
+                         fondo blanco, donde el color claro del tono no se leería. -->
+                    <option
+                      v-for="(label, value) in ESTADO_LABELS"
+                      :key="value"
+                      :value="value"
+                      class="bg-white text-slate-700"
+                    >
+                      {{ label }}
+                    </option>
+                  </select>
+                  <svg
+                    class="pointer-events-none absolute right-2 h-3 w-3"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path
+                      fill-rule="evenodd"
+                      d="M5.23 7.21a.75.75 0 011.06.02L10 11.19l3.71-3.96a.75.75 0 111.08 1.04l-4.25 4.53a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
+                      clip-rule="evenodd"
+                    />
+                  </svg>
+                </span>
               </td>
               <td class="px-4 py-2.5">
                 <div class="flex items-center justify-end gap-1">
@@ -284,16 +383,9 @@ async function quickCancel(appointment: AppointmentRow): Promise<void> {
                   >
                     <span class="h-4 w-4"><ActionIcon name="edit" /></span>
                   </button>
-                  <button
-                    v-if="a.estado !== 'cancelada'"
-                    type="button"
-                    class="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-red-50 hover:text-red-600"
-                    title="Cancelar"
-                    aria-label="Cancelar"
-                    @click="quickCancel(a)"
-                  >
-                    <span class="h-4 w-4"><ActionIcon name="trash" /></span>
-                  </button>
+                  <!-- Sin botón de cancelar: "Cancelada" es un valor más del
+                       selector de Estado, y por ahí sí se registra el motivo y
+                       quién canceló. -->
                   <a
                     v-if="a.estado === 'pendiente' && waLinks[a.id]"
                     :href="waLinks[a.id]!"
@@ -333,6 +425,16 @@ async function quickCancel(appointment: AppointmentRow): Promise<void> {
       :appointment="editingAppointment"
       @close="showModal = false"
       @saved="handleSaved"
+    />
+
+    <CancelAppointmentModal
+      v-if="cancelling"
+      :paciente-nombre="patientLabel(cancelling.patient)"
+      :fecha-texto="formatDay(new Date(cancelling.inicio))"
+      :hora-texto="formatTime(new Date(cancelling.inicio))"
+      :saving="savingEstadoId === cancelling.id"
+      @close="cancelling = null"
+      @confirm="confirmCancel"
     />
   </div>
 </template>
