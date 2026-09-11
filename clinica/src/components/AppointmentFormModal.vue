@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { createItem, readItems, updateItem } from "@directus/sdk";
 import { DateTime } from "luxon";
 import { directus } from "@/lib/directus";
-import type { AppointmentRow, AppointmentStatus, CancelledBy, PatientRow, TimeOffRow, WorkingHoursRow } from "@/lib/directus";
+import type { AppointmentRow, AppointmentStatus, PatientRow, TimeOffRow, WorkingHoursRow } from "@/lib/directus";
 import { useAuthStore } from "@/stores/auth";
 import { useCatalogStore } from "@/stores/catalog";
 import { useClinicaStore } from "@/stores/clinica";
@@ -11,6 +11,7 @@ import { CLINIC_TIMEZONE, formatDay, formatTime, toIsoOrThrow } from "@/lib/date
 import { looksLikePhone } from "@/lib/phone";
 import { friendlyErrorMessage } from "@/lib/directusErrors";
 import { computeAvailableStartTimes, computeUnavailableDates } from "@/lib/schedule";
+import { cancelledByRole } from "@/lib/appointmentStatus";
 import { overlapsAnyAppointment } from "@/lib/patientOverlap";
 import DatePicker from "@/components/DatePicker.vue";
 import Button from "@/components/ui/Button.vue";
@@ -105,19 +106,38 @@ const scheduleChanged = computed(
     props.mode === "edit" &&
     (serviceId.value !== originalService || doctorId.value !== originalDoctor || date.value !== originalDate),
 );
+
+/**
+ * Instante en que se abrió el modal. Fijo a propósito: `isPastRecord` no debe
+ * cambiar de valor a mitad de una edición solo porque el reloj avanzó.
+ */
+const openedAt = DateTime.now().setZone(CLINIC_TIMEZONE);
+const originalStart = editingAppointment
+  ? DateTime.fromISO(editingAppointment.inicio, { zone: CLINIC_TIMEZONE })
+  : null;
+
+/**
+ * La cita ya ocurrió y no se está moviendo de fecha: el modal deja de buscar
+ * un hueco libre y pasa a registrar lo que pasó (marcarla completada / no se
+ * presentó, corregir el servicio realmente realizado).
+ *
+ * Sin esto no se puede guardar nada: `computeAvailableStartTimes` descarta todo
+ * candidato anterior a "ahora" (`schedule.ts`), así que cualquier día pasado
+ * vuelve sin horas, `computeUnavailableDates` lo reporta como día sin cupo y
+ * `dateProblem` mostraba "ese día ya no tiene cupos" dejando Guardar
+ * deshabilitado para siempre. Esa validación es correcta al agendar, pero no
+ * al registrar una cita que ya existe y ya pasó.
+ *
+ * Si el usuario elige otra fecha vuelve la validación normal: eso ya es
+ * reagendar, y el `min-date` del calendario solo deja fechas futuras.
+ */
+const isPastRecord = computed(
+  () =>
+    props.mode === "edit" && !!originalStart && originalStart < openedAt && date.value === originalDate,
+);
 const estado = ref<AppointmentStatus>(editingAppointment?.estado ?? "pendiente");
 /** Solo se muestra (y se envía) cuando el estado pasa a `cancelada`. */
 const motivoCancelacion = ref<string>(editingAppointment?.motivo_cancelacion ?? "");
-
-/**
- * Quién origina la cancelación, para el reporte. Se resuelve por el rol de quien
- * está usando el panel: si cancela desde acá, no es el paciente por WhatsApp.
- */
-function quienCancela(): CancelledBy {
-  if (auth.isAdmin) return "admin";
-  if (auth.isReceptionist) return "recepcion";
-  return "medico";
-}
 
 const saving = ref(false);
 const error = ref<string | null>(null);
@@ -279,6 +299,10 @@ const visibleRange = ref<{ from: string; to: string } | null>(null);
  * datos del médico ya están cargados completos en memoria.
  */
 const unavailableDates = computed<string[]>(() => {
+  // Mismo motivo que en `disabledWeekdays`: mientras se carga la agenda del
+  // médico, `doctorWorkingHours` está vacío y todo el rango saldría "sin
+  // cupos", haciendo parpadear el aviso de fecha inválida.
+  if (loadingSlots.value) return [];
   if (!visibleRange.value || !doctorId.value || !serviceId.value) return [];
   return computeUnavailableDates(visibleRange.value, doctorWorkingHours.value, doctorTimeOff.value, appointmentsForCheck.value, {
     durationMin: durationMin.value,
@@ -293,9 +317,13 @@ const unavailableDates = computed<string[]>(() => {
  * de nuevo antes de guardar. Pero solo mientras `scheduleChanged` sea falso: en
  * cuanto servicio/médico/fecha se apartan de lo original, esa hora heredada deja
  * de ser confiable (ver el watch de `availableTimes` más abajo, que la limpia).
+ *
+ * En una cita que ya pasó (`isPastRecord`) la hora se conserva igual aunque se
+ * cambie el servicio o el médico: se está anotando lo que realmente ocurrió, y
+ * ese día no va a ofrecer ninguna hora libre para elegir en su lugar.
  */
 const timeOptions = computed<string[]>(() => {
-  if (time.value && !availableTimes.value.includes(time.value) && !scheduleChanged.value) {
+  if (time.value && !availableTimes.value.includes(time.value) && (!scheduleChanged.value || isPastRecord.value)) {
     return [time.value, ...availableTimes.value].sort();
   }
   return availableTimes.value;
@@ -312,6 +340,9 @@ const timeOptions = computed<string[]>(() => {
  * nuevo en ese momento, no solo en el instante en que cambió el id.
  */
 watch(availableTimes, () => {
+  // En una cita ya ocurrida no hay hora libre que elegir en su lugar: vaciarla
+  // dejaría el formulario sin poder guardarse (ver `isPastRecord`).
+  if (isPastRecord.value) return;
   if (!scheduleChanged.value || loadingSlots.value) return;
   if (time.value && !availableTimes.value.includes(time.value)) {
     time.value = "";
@@ -472,6 +503,9 @@ const showNewPatientFields = computed(
  */
 const dateProblem = computed<"weekday" | "full" | null>(() => {
   if (!date.value) return null;
+  // La cita ya ocurrió en esa fecha: no hay disponibilidad que validar (ver
+  // `isPastRecord`).
+  if (isPastRecord.value) return null;
   const weekday = DateTime.fromFormat(date.value, "yyyy-LL-dd", { zone: CLINIC_TIMEZONE }).weekday;
   if (disabledWeekdays.value.includes(weekday)) return "weekday";
   if (unavailableDates.value.includes(date.value)) return "full";
@@ -485,7 +519,9 @@ const canSubmit = computed(() => {
   // aún contra la nueva agenda — no dejar guardar en ese instante.
   if (loadingSlots.value) return false;
   if (dateProblem.value !== null) return false;
-  if (patientConflict.value) return false;
+  // Dos citas pasadas que se solapan son un hecho consumado: el panel las
+  // registra, no las impide (ver `isPastRecord`).
+  if (!isPastRecord.value && patientConflict.value) return false;
   if (props.mode === "create" && !selectedPatient.value) {
     if (!newPatientName.value.trim() || !newPatientPhone.value.trim()) return false;
   }
@@ -571,7 +607,7 @@ async function handleSubmit(): Promise<void> {
           ...(estado.value === "cancelada" && props.appointment.estado !== "cancelada"
             ? {
                 cancelado_en: new Date().toISOString(),
-                cancelado_por: quienCancela(),
+                cancelado_por: cancelledByRole(auth),
                 motivo_cancelacion: motivoCancelacion.value.trim() || null,
               }
             : estado.value === "cancelada"
@@ -732,7 +768,10 @@ async function handleSubmit(): Promise<void> {
             :disabled-dates="unavailableDates"
             @visible-range-change="visibleRange = $event"
           />
-          <p v-if="dateProblem === 'weekday'" class="mt-1 text-xs text-red-600">
+          <p v-if="isPastRecord" class="mt-1 text-xs text-slate-500">
+            Esta cita ya pasó: puedes registrar su resultado. Para reagendarla, elige otra fecha.
+          </p>
+          <p v-else-if="dateProblem === 'weekday'" class="mt-1 text-xs text-red-600">
             Este médico no atiende ese día; elige otra fecha.
           </p>
           <p v-else-if="dateProblem === 'full'" class="mt-1 text-xs text-red-600">
@@ -781,7 +820,9 @@ async function handleSubmit(): Promise<void> {
           <p class="mt-1 text-xs text-slate-500">Aparece en el reporte de Cancelaciones.</p>
         </div>
 
-        <p v-if="patientConflict" class="text-sm text-red-600">
+        <!-- No se avisa en una cita ya ocurrida: ahí el solape no impide guardar
+             (ver `isPastRecord`), así que el aviso en rojo solo confundiría. -->
+        <p v-if="patientConflict && !isPastRecord" class="text-sm text-red-600">
           Este paciente ya tiene otra cita que se traslapa con este horario en esta clínica.
         </p>
         <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
