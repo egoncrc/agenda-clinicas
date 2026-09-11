@@ -21,6 +21,8 @@ const passwordJustChanged = computed(() => route.query.cambiada === "1");
 
 /** Lo pone el guard de 401 de `lib/directus.ts` cuando la sesión murió con el panel abierto. */
 const sessionExpired = computed(() => route.query.expirada === "1");
+/** Lo pone `composables/useIdleTimeout.ts` tras una hora sin actividad real del usuario. */
+const idleLoggedOut = computed(() => route.query.expirada === "inactividad");
 
 const currentYear = new Date().getFullYear();
 
@@ -126,6 +128,13 @@ async function handleSubmit(): Promise<void> {
           class="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800"
         >
           Tu sesión expiró. Volvé a ingresar.
+        </div>
+
+        <div
+          v-if="idleLoggedOut"
+          class="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800"
+        >
+          Cerramos tu sesión por inactividad. Volvé a ingresar.
         </div>
 
         <form class="mt-8 space-y-5" @submit.prevent="handleSubmit">

@@ -251,7 +251,7 @@ let handlingExpiredSession = false;
  * Los imports son dinámicos a propósito: el store y el router importan este
  * archivo, y estáticos serían un ciclo.
  */
-async function handleExpiredSession(): Promise<void> {
+export async function handleExpiredSession(reason: "session" | "inactividad" = "session"): Promise<void> {
   if (handlingExpiredSession) return;
   handlingExpiredSession = true;
   try {
@@ -270,7 +270,7 @@ async function handleExpiredSession(): Promise<void> {
     auth.ownDoctorId = null;
     useCatalogStore().reset();
     useClinicaStore().reset();
-    await router.push({ name: "login", query: { expirada: "1" } });
+    await router.push({ name: "login", query: { expirada: reason === "inactividad" ? "inactividad" : "1" } });
   } finally {
     handlingExpiredSession = false;
   }
